@@ -1,0 +1,5 @@
+data/
+chroma_store/
+__pycache__/
+.pytest_cache/
+.env

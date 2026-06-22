@@ -1,0 +1,1 @@
+"""AAA FastAPI package."""

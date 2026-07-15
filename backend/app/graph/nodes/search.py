@@ -1,0 +1,2 @@
+"""Search node placeholder."""
+

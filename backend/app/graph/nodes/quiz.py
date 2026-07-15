@@ -1,0 +1,2 @@
+"""Quiz node placeholder."""
+

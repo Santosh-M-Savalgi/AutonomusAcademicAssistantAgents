@@ -1,0 +1,2 @@
+"""Embedding agent placeholder."""
+

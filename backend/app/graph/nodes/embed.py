@@ -1,0 +1,2 @@
+"""Embedding node placeholder."""
+

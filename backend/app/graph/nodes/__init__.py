@@ -1,0 +1,2 @@
+"""Graph node package scaffolding."""
+

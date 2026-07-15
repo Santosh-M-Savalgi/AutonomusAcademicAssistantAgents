@@ -14,6 +14,26 @@ import main
 from persistence.db import get_connection, init_db
 
 
+def _route_methods(app) -> set[tuple[str, str]]:
+    route_methods: set[tuple[str, str]] = set()
+    pending = list(app.routes)
+    while pending:
+        route = pending.pop()
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            pending.extend(original_router.routes)
+            continue
+        nested = getattr(route, "routes", None)
+        if nested:
+            pending.extend(nested)
+            continue
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", set())
+        if path is not None:
+            route_methods.update((method, path) for method in methods)
+    return route_methods
+
+
 def test_endpoint_contract_and_mocked_full_flow(monkeypatch) -> None:
     with TemporaryDirectory() as directory:
         db_path = Path(directory) / "api.db"
@@ -53,8 +73,7 @@ def test_endpoint_contract_and_mocked_full_flow(monkeypatch) -> None:
                 ("GET", "/api/v1/students/{student_id}/topics"),
                 ("GET", "/api/v1/health"),
             }
-            actual = {(method, route.path) for route in main.app.routes
-                      for method in getattr(route, "methods", set())}
+            actual = _route_methods(main.app)
             assert expected <= actual
             assert client.get("/api/v1/health").json() == {"status": "ok"}
             created = client.post("/api/v1/students", json={"name": "Ada", "raw_input": "Learn testing"})

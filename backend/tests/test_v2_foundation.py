@@ -24,17 +24,22 @@ def test_readyz_reports_dependency_checks(monkeypatch) -> None:
     async def ok_check() -> tuple[bool, str]:
         return True, "ok"
 
+    async def ok_tuple() -> tuple[bool, str]:
+        return True, "available"
+
     from app.api import health
 
     monkeypatch.setattr(health, "check_postgres", ok_check)
     monkeypatch.setattr(health, "check_redis", ok_check)
     monkeypatch.setattr(health, "check_chroma", ok_check)
     monkeypatch.setattr(health, "check_object_storage", ok_check)
+    monkeypatch.setattr(health, "check_provider_health", ok_tuple)
+    monkeypatch.setattr(health, "check_jobs_health", ok_tuple)
 
     app = create_app()
 
     with TestClient(app) as client:
-        response = client.get("/readyz")
+        response = client.get("/readyz/detailed")
 
     payload = response.json()
     assert response.status_code == 200

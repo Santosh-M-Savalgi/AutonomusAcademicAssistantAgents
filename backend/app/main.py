@@ -1,7 +1,18 @@
-"""AAA v2 FastAPI app factory (Sprint 0 foundation)."""
+"""AAA v2 FastAPI app factory (Sprint 0-10).
+
+Sprint 10 adds:
+- Request context correlation middleware
+- Security headers middleware
+- Rate limiting middleware
+- Global exception handler
+- Prometheus metrics endpoint
+- OpenTelemetry tracing (optional)
+- Configuration validation at startup
+"""
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,15 +20,29 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import health
 from app.api.v2 import router as v2_router
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_configuration
+from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestLoggingMiddleware, configure_logging
-from app.core.rate_limit import RateLimitMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.security import SecurityHeadersMiddleware
+from app.monitoring.metrics import metrics_endpoint
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    # Validate configuration on startup
+    config_status = validate_configuration()
+    if config_status["status"] == "invalid":
+        logger.error("Configuration validation failed: %s", config_status.get("errors"))
+        # Log but don't crash — allow the app to start for debugging
+        # Production deployments should gate on this
+
     yield
 
 
@@ -28,7 +53,13 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         lifespan=lifespan,
     )
-    app.add_middleware(RequestLoggingMiddleware)
+
+    # ── Middleware order matters. Outermost first. ──────────────────────────
+
+    # 1. Security headers (outermost — applied to all responses)
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # 2. CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -36,12 +67,28 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 3. Request context / correlation ID (before logging)
+    app.add_middleware(RequestContextMiddleware)
+
+    # 4. Structured request logging
+    app.add_middleware(RequestLoggingMiddleware)
+
+    # 5. Rate limiting (guards all API routes)
     if settings.enable_rate_limit:
         app.add_middleware(RateLimitMiddleware)
+
+    # ── Exception handlers ─────────────────────────────────────────────────
+    register_exception_handlers(app)
+
+    # ── Routes ─────────────────────────────────────────────────────────────
     app.include_router(health.router)
     app.include_router(v2_router.router)
+
+    # Prometheus /metrics endpoint
+    app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
+
     return app
 
 
 app = create_app()
-

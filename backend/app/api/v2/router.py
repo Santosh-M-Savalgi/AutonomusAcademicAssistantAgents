@@ -10,6 +10,7 @@ from app.api.v2 import (
     lessons,
     quiz,
     recommendations,
+    retrieval,
     search,
     session,
 )
@@ -21,7 +22,7 @@ router.include_router(lessons.router)
 router.include_router(quiz.router)
 router.include_router(search.router)
 router.include_router(recommendations.router)
+router.include_router(retrieval.router)
 router.include_router(session.router)
 router.include_router(dashboard.router)
 router.include_router(analytics.router)
-

@@ -7,6 +7,7 @@ from app.api.v2 import (
     analytics,
     auth,
     dashboard,
+    jobs,
     knowledge_graph,
     lessons,
     quiz,
@@ -28,3 +29,4 @@ router.include_router(session.router)
 router.include_router(dashboard.router)
 router.include_router(analytics.router)
 router.include_router(adaptive.router)
+router.include_router(jobs.router)

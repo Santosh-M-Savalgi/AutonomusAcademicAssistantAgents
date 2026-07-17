@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.llm.evaluation_service import EvaluationResult, EvaluationService, RoutingInstruction
 from app.llm.providers.base import BaseProvider, ProviderError
@@ -26,6 +27,7 @@ from app.services.context_builder import ContextBuilder, TutorContext, QuizConte
 from app.services.retrieval_service import RetrievalResult, RetrievalService
 from app.services.knowledge_graph_service import KnowledgeGraph
 from app.services.mastery_service import MasteryEngine
+from app.session.session_manager import SessionManager
 
 
 # ── Domain types ────────────────────────────────────────────────────────────
@@ -100,6 +102,7 @@ class WorkflowOrchestrator:
         context_builder: ContextBuilder | None = None,
         adaptive_router: AdaptiveRouter | None = None,
         mastery_engine: MasteryEngine | None = None,
+        session_manager: SessionManager | None = None,
     ):
         self.tutor = tutor_service or TutorService()
         self.quiz_service = quiz_service or QuizService()
@@ -108,6 +111,7 @@ class WorkflowOrchestrator:
         self.context_builder = context_builder or ContextBuilder()
         self.adaptive_router = adaptive_router or AdaptiveRouter()
         self.mastery_engine = mastery_engine or MasteryEngine()
+        self.session_manager = session_manager or SessionManager()
 
     async def _enrich_with_retrieval(self, ctx: StudyContext) -> StudyContext:
         """If retrieval is enabled, perform retrieval and context building."""
@@ -144,6 +148,8 @@ class WorkflowOrchestrator:
         """Phase 1: Generate a lesson for the current topic.
 
         Returns the lesson result. Does NOT proceed to quiz generation.
+
+        Auto-saves session state after lesson generation.
         """
         try:
             # Enrich with retrieval if enabled
@@ -172,15 +178,36 @@ class WorkflowOrchestrator:
                 student_preferences=ctx.student_preferences,
             )
             lesson.topic_id = ctx.topic_id
+
+            # ── Session auto-save ────────────────────────────────────────
+            if ctx.session_id:
+                await self.session_manager.update_after_lesson(
+                    session_id=ctx.session_id,
+                    topic_id=ctx.topic_id,
+                    topic_name=ctx.topic_name,
+                    lesson_data=_lesson_to_dict(lesson),
+                    lesson_title=lesson.title,
+                )
+            # ─────────────────────────────────────────────────────────────
+
             return StudySessionResult(lesson=lesson, phase_completed="lesson")
         except ProviderError as exc:
             error_msg = f"Lesson generation failed: {exc}"
+            # ── Session error saving ────────────────────────────────────
+            if ctx.session_id:
+                await self.session_manager.update_workflow_state(
+                    ctx.session_id,
+                    {"errors": [{"phase": "lesson", "error": error_msg}]},
+                )
+            # ─────────────────────────────────────────────────────────────
             return StudySessionResult(error=error_msg, phase_completed="error")
 
     async def generate_quiz(self, ctx: StudyContext) -> StudySessionResult:
         """Phase 2: Generate a quiz for the current topic.
 
         Returns lesson + quiz. Does NOT proceed to evaluation.
+
+        Auto-saves session state after quiz generation.
         """
         try:
             # Generate lesson first (needed for quiz context)
@@ -197,6 +224,16 @@ class WorkflowOrchestrator:
                 prerequisite_topics=ctx.prerequisite_topics,
             )
             quiz.topic_id = ctx.topic_id
+
+            # ── Session auto-save ────────────────────────────────────────
+            if ctx.session_id:
+                await self.session_manager.update_after_quiz(
+                    session_id=ctx.session_id,
+                    topic_id=ctx.topic_id,
+                    topic_name=ctx.topic_name,
+                    quiz_data=_quiz_to_dict(quiz),
+                )
+            # ─────────────────────────────────────────────────────────────
 
             return StudySessionResult(
                 lesson=lesson_result.lesson,
@@ -218,6 +255,12 @@ class WorkflowOrchestrator:
             1. Generate lesson
             2. Generate quiz
             3. If quiz_answers provided, evaluate them and route
+
+        Auto-saves session state after every phase:
+        - Lesson generation
+        - Quiz generation
+        - Evaluation
+        - Routing decision
 
         Args:
             ctx: The study context with topic info.
@@ -243,6 +286,16 @@ class WorkflowOrchestrator:
         )
         quiz.topic_id = ctx.topic_id
 
+        # ── Session: quiz auto-save ──────────────────────────────────────
+        if ctx.session_id:
+            await self.session_manager.update_after_quiz(
+                session_id=ctx.session_id,
+                topic_id=ctx.topic_id,
+                topic_name=ctx.topic_name,
+                quiz_data=_quiz_to_dict(quiz),
+            )
+        # ─────────────────────────────────────────────────────────────────
+
         # 3. If no answers provided, return lesson + quiz
         if not quiz_answers:
             return StudySessionResult(
@@ -265,8 +318,29 @@ class WorkflowOrchestrator:
                 phase_completed="error",
             )
 
+        # ── Session: evaluation auto-save ────────────────────────────────
+        if ctx.session_id:
+            await self.session_manager.update_after_evaluation(
+                session_id=ctx.session_id,
+                score=evaluation.score,
+                evaluation_data=_evaluation_to_dict(evaluation),
+                quiz_answers=quiz_answers,
+            )
+        # ─────────────────────────────────────────────────────────────────
+
         # 5. Produce routing instruction
         routing = self._compute_routing(ctx, evaluation)
+
+        # ── Session: routing auto-save ───────────────────────────────────
+        if ctx.session_id:
+            await self.session_manager.update_after_routing(
+                session_id=ctx.session_id,
+                decision=routing.decision,
+                reason=routing.reason,
+                next_topic_id=routing.next_topic_id,
+                weak_concepts=routing.weak_concepts,
+            )
+        # ─────────────────────────────────────────────────────────────────
 
         return StudySessionResult(
             lesson=lesson_result.lesson,
@@ -394,3 +468,69 @@ def _to_uuid(value: str | uuid.UUID | None) -> uuid.UUID:
         return uuid.UUID(value)
     except (ValueError, AttributeError):
         return uuid.uuid4()
+
+
+def _lesson_to_dict(lesson: Lesson) -> dict[str, Any]:
+    """Convert a Lesson dataclass to a JSON-safe dict for session storage."""
+    return {
+        "topic_id": lesson.topic_id,
+        "topic_name": lesson.topic_name,
+        "title": lesson.title,
+        "cards": [
+            {
+                "title": c.title,
+                "body": c.body,
+                "card_type": c.card_type,
+            }
+            for c in lesson.cards
+        ],
+        "estimated_minutes": lesson.estimated_minutes,
+        "learning_mode": lesson.learning_mode,
+    }
+
+
+def _quiz_to_dict(quiz: Quiz) -> dict[str, Any]:
+    """Convert a Quiz dataclass to a JSON-safe dict for session storage."""
+    return {
+        "topic_id": quiz.topic_id,
+        "topic_name": quiz.topic_name,
+        "questions": [
+            {
+                "id": q.id,
+                "question": q.question,
+                "options": q.options,
+                "correct_answer": q.correct_answer,
+                "explanation": q.explanation,
+                "difficulty": q.difficulty,
+                "concept_tag": q.concept_tag,
+                "bloom_level": q.bloom_level,
+                "estimated_time_seconds": q.estimated_time_seconds,
+            }
+            for q in quiz.questions
+        ],
+        "total_questions": quiz.total_questions,
+        "difficulty_breakdown": quiz.difficulty_breakdown,
+    }
+
+
+def _evaluation_to_dict(evaluation: EvaluationResult) -> dict[str, Any]:
+    """Convert an EvaluationResult dataclass to a JSON-safe dict for session storage."""
+    return {
+        "score": evaluation.score,
+        "total_questions": evaluation.total_questions,
+        "correct_count": evaluation.correct_count,
+        "incorrect_count": evaluation.incorrect_count,
+        "submissions": [
+            {
+                "question_id": s.question_id,
+                "selected_answer": s.selected_answer,
+                "correct_answer": s.correct_answer,
+                "is_correct": s.is_correct,
+                "time_taken_seconds": s.time_taken_seconds,
+            }
+            for s in evaluation.submissions
+        ],
+        "weak_concept_tags": evaluation.weak_concept_tags,
+        "strong_concept_tags": evaluation.strong_concept_tags,
+        "feedback": evaluation.feedback,
+    }

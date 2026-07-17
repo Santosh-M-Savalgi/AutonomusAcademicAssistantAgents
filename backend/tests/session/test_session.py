@@ -980,9 +980,43 @@ class TestSessionAPI:
     """API endpoint integration tests."""
 
     @pytest.fixture
-    def app(self):
+    def auth_override(self):
+        """Override auth dependencies to simulate an authenticated student."""
+        from unittest.mock import MagicMock
+
+        from app.db.models import User
+        from app.db.models.enums import UserRole
+
+        class MockUser:
+            """Simulates an authenticated user for testing."""
+            id = "00000000-0000-0000-0000-000000000001"
+            email = "test@example.com"
+            username = "testuser"
+            role = UserRole.student
+            is_active = True
+
+        # We patch the dependency functions at the FastAPI app level
+        # via dependency_overrides — set up in the app fixture.
+        return MockUser()
+
+    @pytest.fixture
+    def app(self, auth_override):
         from app.main import create_app
-        return create_app()
+        app = create_app()
+
+        # Override auth dependencies to bypass JWT validation
+        from app.auth import dependencies as auth_deps
+
+        async def mock_get_current_user():
+            return auth_override
+
+        async def mock_get_current_student():
+            return auth_override
+
+        app.dependency_overrides[auth_deps.get_current_user] = mock_get_current_user
+        app.dependency_overrides[auth_deps.get_current_student] = mock_get_current_student
+
+        return app
 
     @pytest.fixture
     def client(self, app, mock_redis):
@@ -1011,11 +1045,11 @@ class TestSessionAPI:
     async def test_create_session(self, client) -> None:
         response = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123", "syllabus_id": "syll-456"},
+            json={"syllabus_id": "syll-456"},
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["student_id"] == "student-123"
+        assert data["student_id"] == "00000000-0000-0000-0000-000000000001"
         assert data["syllabus_id"] == "syll-456"
         assert data["status"] == "active"
         assert data["session_id"] != ""
@@ -1025,7 +1059,7 @@ class TestSessionAPI:
         # Create first
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 
@@ -1034,7 +1068,7 @@ class TestSessionAPI:
         assert get_resp.status_code == 200
         data = get_resp.json()
         assert data["session_id"] == sid
-        assert data["student_id"] == "student-123"
+        assert data["student_id"] == "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
     async def test_get_session_not_found(self, client) -> None:
@@ -1045,7 +1079,7 @@ class TestSessionAPI:
     async def test_resume_session(self, client) -> None:
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 
@@ -1064,7 +1098,7 @@ class TestSessionAPI:
     async def test_checkpoint(self, client) -> None:
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 
@@ -1083,7 +1117,7 @@ class TestSessionAPI:
     async def test_delete_session(self, client) -> None:
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 
@@ -1101,7 +1135,7 @@ class TestSessionAPI:
     async def test_get_session_state(self, client) -> None:
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 
@@ -1110,7 +1144,7 @@ class TestSessionAPI:
         data = state_resp.json()
         assert data["session_id"] == sid
         assert "state" in data
-        assert data["state"]["student_id"] == "student-123"
+        assert data["state"]["student_id"] == "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
     async def test_get_session_state_not_found(self, client) -> None:
@@ -1121,7 +1155,7 @@ class TestSessionAPI:
     async def test_complete_session(self, client) -> None:
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 
@@ -1140,7 +1174,7 @@ class TestSessionAPI:
     async def test_timeout(self, client) -> None:
         create_resp = client.post(
             "/api/v2/sessions",
-            json={"student_id": "student-123"},
+            json={},
         )
         sid = create_resp.json()["session_id"]
 

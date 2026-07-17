@@ -1,4 +1,7 @@
-"""Application configuration for AAA v2 Sprint 0 foundation."""
+"""Application configuration for AAA v2 Sprint 0 foundation.
+
+Sprint 6: adds JWT secret, access/refresh token expiration, bcrypt rounds.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +45,13 @@ class Settings(BaseSettings):
     dependency_check_timeout_seconds: float = 2.0
     enable_rate_limit: bool = False
 
+    # --- Authentication (Sprint 6) ---
+    jwt_secret_key: str = "super-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+    bcrypt_rounds: int = 12
+
     service_name_backend: str = "backend"
     service_name_postgres: str = "postgres"
     service_name_redis: str = "redis"
@@ -65,4 +75,3 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
-

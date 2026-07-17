@@ -1,4 +1,7 @@
-"""Session API endpoints — durable session persistence (Sprint 5).
+"""Session API endpoints — durable session persistence (Sprint 5, Sprint 6).
+
+Sprint 6: all endpoints require authentication; session ownership is validated
+before any operation. Only the owning student (or admin) may access a session.
 
 Endpoints:
 - POST   /sessions               — create a new learning session
@@ -16,9 +19,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.auth.dependencies import get_current_student
+from app.db.models import User
 from app.session.session_manager import SessionManager
 from app.session.session_models import SessionData
 
@@ -50,7 +55,6 @@ def _get_manager() -> SessionManager:
 
 
 class CreateSessionRequest(BaseModel):
-    student_id: str = Field(..., description="Identifier of the student")
     syllabus_id: str = Field("", description="Optional syllabus / curriculum ID")
     session_id: str | None = Field(None, description="Optional explicit session ID")
     metadata: dict[str, Any] | None = Field(None, description="Optional custom metadata")
@@ -80,10 +84,6 @@ class ResumeResponse(BaseModel):
     """List of recovered state components."""
 
 
-class CheckpointRequest(BaseModel):
-    session_id: str = Field(..., description="Session ID to checkpoint")
-
-
 class CheckpointResponse(BaseModel):
     saved: bool
     session_id: str
@@ -103,6 +103,11 @@ class TimeoutResponse(BaseModel):
 class StateResponse(BaseModel):
     session_id: str
     state: dict[str, Any]
+
+
+class DeleteResponse(BaseModel):
+    deleted: bool
+    session_id: str
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────
@@ -129,19 +134,53 @@ def _build_session_response(session: SessionData) -> SessionResponse:
     )
 
 
+def _validate_session_ownership(session: SessionData | None, session_id: str, user: User) -> SessionData:
+    """Validate that a session exists and belongs to the current user (or admin).
+
+    Args:
+        session: The session data (may be None).
+        session_id: The requested session ID (for error messaging).
+        user: The authenticated user.
+
+    Returns:
+        The validated SessionData.
+
+    Raises:
+        HTTPException 404 if session not found.
+        HTTPException 403 if session belongs to another user (and user is not admin).
+    """
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    # Admin can access any session
+    if user.role == "admin":
+        return session
+
+    # Student can only access own sessions
+    if session.student_id != str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this session",
+        )
+
+    return session
+
+
 # ── Endpoints ───────────────────────────────────────────────────────────────
 
 
 @router.post("", response_model=SessionResponse, status_code=201)
-async def create_session(request: CreateSessionRequest) -> SessionResponse:
-    """Create a new learning session.
+async def create_session(
+    request: CreateSessionRequest,
+    current_user: User = Depends(get_current_student),
+) -> SessionResponse:
+    """Create a new learning session for the authenticated student.
 
-    Initializes a fresh session for the given student and syllabus.
-    The session is immediately persisted to the checkpoint store.
+    The student_id is taken from the authenticated user, not from the request.
     """
     manager = _get_manager()
     session = await manager.create_session(
-        student_id=request.student_id,
+        student_id=str(current_user.id),
         syllabus_id=request.syllabus_id,
         session_id=request.session_id,
         metadata=request.metadata,
@@ -150,22 +189,28 @@ async def create_session(request: CreateSessionRequest) -> SessionResponse:
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
-async def get_session(session_id: str) -> SessionResponse:
+async def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> SessionResponse:
     """Get the current state of a session.
 
-    Returns the session data as stored in the checkpoint store.
-    Raises 404 if the session is not found or has expired.
+    Session must belong to the authenticated student.
     """
     manager = _get_manager()
     session = await manager.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-    return _build_session_response(session)
+    validated = _validate_session_ownership(session, session_id, current_user)
+    return _build_session_response(validated)
 
 
 @router.post("/{session_id}/resume", response_model=ResumeResponse)
-async def resume_session(session_id: str) -> ResumeResponse:
+async def resume_session(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> ResumeResponse:
     """Resume a session and recover its full state.
+
+    Session must belong to the authenticated student.
 
     Recovers:
     - Lesson state (unfinished lesson can continue)
@@ -178,6 +223,9 @@ async def resume_session(session_id: str) -> ResumeResponse:
     The session TTL is refreshed on resume.
     """
     manager = _get_manager()
+    session = await manager.get_session(session_id)
+    _validate_session_ownership(session, session_id, current_user)
+
     session = await manager.resume_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
@@ -203,59 +251,88 @@ async def resume_session(session_id: str) -> ResumeResponse:
 
 
 @router.post("/{session_id}/checkpoint", response_model=CheckpointResponse)
-async def save_checkpoint(session_id: str) -> CheckpointResponse:
+async def save_checkpoint(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> CheckpointResponse:
     """Save a checkpoint for the given session.
 
+    Session must belong to the authenticated student.
     This refreshes the session TTL and persists the current state.
-    Use this to manually trigger a checkpoint save.
     """
     manager = _get_manager()
     session = await manager.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    _validate_session_ownership(session, session_id, current_user)
 
     session.touch()
     saved = await manager.save_checkpoint(session)
     return CheckpointResponse(saved=saved, session_id=session_id)
 
 
-@router.delete("/{session_id}")
-async def delete_session(session_id: str) -> dict[str, Any]:
+@router.delete("/{session_id}", response_model=DeleteResponse)
+async def delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> DeleteResponse:
     """Delete a session and its checkpoint data.
+
+    Session must belong to the authenticated student.
+    Admin can delete any session.
 
     Removes the session from both Redis and (optionally) Postgres.
     Returns 200 even if the session didn't exist (idempotent).
     """
     manager = _get_manager()
+
+    # Admin bypass: if admin, skip ownership check
+    if current_user.role != "admin":
+        session = await manager.get_session(session_id)
+        _validate_session_ownership(session, session_id, current_user)
+
     deleted = await manager.delete_session(session_id)
-    return {"deleted": deleted, "session_id": session_id}
+    return DeleteResponse(deleted=deleted, session_id=session_id)
 
 
 @router.get("/{session_id}/state", response_model=StateResponse)
-async def get_session_state(session_id: str) -> StateResponse:
+async def get_session_state(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> StateResponse:
     """Get the full session state as a plain dict.
+
+    Session must belong to the authenticated student.
 
     Returns the raw serialized session data for debugging
     and frontend inspection.
     """
     manager = _get_manager()
-    state = await manager.to_dict(session_id)
+
+    # Validate ownership first
+    session = await manager.get_session(session_id)
+    validated = _validate_session_ownership(session, session_id, current_user)
+
+    # Use validated session to build state
+    state = validated.to_dict()
     if state is None:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     return StateResponse(session_id=session_id, state=state)
 
 
 @router.post("/{session_id}/complete", response_model=CompleteResponse)
-async def complete_session(session_id: str) -> CompleteResponse:
+async def complete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> CompleteResponse:
     """Mark a session as completed.
+
+    Session must belong to the authenticated student.
 
     Once completed, the session cannot be resumed for further study
     (though its data remains accessible for review).
     """
     manager = _get_manager()
     session = await manager.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    _validate_session_ownership(session, session_id, current_user)
 
     completed = await manager.complete_session(session_id)
     return CompleteResponse(
@@ -266,8 +343,13 @@ async def complete_session(session_id: str) -> CompleteResponse:
 
 
 @router.post("/{session_id}/timeout", response_model=TimeoutResponse)
-async def check_timeout(session_id: str) -> TimeoutResponse:
+async def check_timeout(
+    session_id: str,
+    current_user: User = Depends(get_current_student),
+) -> TimeoutResponse:
     """Check if a session has timed out due to inactivity.
+
+    Session must belong to the authenticated student.
 
     Returns the current status after the check:
     - active: session is still active
@@ -275,5 +357,13 @@ async def check_timeout(session_id: str) -> TimeoutResponse:
     - expired: session was expired (deleted from hot storage)
     """
     manager = _get_manager()
-    status = await manager.check_timeout(session_id)
-    return TimeoutResponse(session_id=session_id, status=status.value)
+
+    # Validate ownership
+    session = await manager.get_session(session_id)
+    _validate_session_ownership(session, session_id, current_user)
+
+    status_value = await manager.check_timeout(session_id)
+    return TimeoutResponse(session_id=session_id, status=status_value.value)
+
+
+

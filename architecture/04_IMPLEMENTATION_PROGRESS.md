@@ -16,8 +16,8 @@
 
 | Phase | Name | Status | Progress | Notes (architecture-derived) |
 |---|---|---|---:|---|
-| 0 | Foundation Bootstrap | In Progress | 80% | v2 backend skeleton, health/readiness probes, local compose stack, env example, request/session logging, and tests are implemented. Docker runtime validation is blocked locally because the Docker daemon is unavailable. |
-| 1 | Data Model & Persistence Core | Planned | 0% | Implement Section 15 schema + checkpoint adapter |
+| 0 | Foundation Bootstrap | Complete | 100% | v2 backend skeleton, health/readiness probes, local compose stack, env example, request/session logging, and tests are implemented. Docker Compose is working; PostgreSQL, Redis, ChromaDB, MinIO, and FastAPI are healthy. Sprint 0 committed. |
+| 1 | Data Model & Persistence Core | In Progress | 0% | Active sprint. Implement Section 15 schema, async SQLAlchemy persistence, Alembic migrations, repository infrastructure, database dependency injection, and checkpoint persistence adapter. |
 | 2 | LLM Provider Router & Core Runtime | Planned | 0% | Router, retry/backoff, circuit breaker, graph skeleton |
 | 3 | Knowledge Graph Ingestion & Context Tooling | Planned | 0% | Syllabus parsing, edge inference, closure maintenance |
 | 4 | Search, Retrieval, and Embedding Pipelines | Planned | 0% | Extended Search Agent, hybrid retrieval, batch embeddings |
@@ -33,7 +33,7 @@
 
 | Workstream | Status | Progress | Exit Signal |
 |---|---|---:|---|
-| Platform & Data Foundation | In Progress | 70% | Compose stack and health probes exist; core-store runtime startup is pending Docker daemon availability |
+| Platform & Data Foundation | In Progress | 80% | Sprint 0 foundation is complete and healthy; Sprint 1 persistence core is active |
 | Graph Runtime & Agents | Planned | 0% | Checkpointed/resumable graph + 9-agent topology active |
 | Pipelines (KG/Search/Retrieval/Embedding/Teaching/Quiz/Adaptive) | Planned | 0% | End-to-end topic cycle functional |
 | API & Product Surfaces | Planned | 0% | `/api/v2/*` domains usable by frontend |
@@ -101,20 +101,35 @@ Validation:
 
 - `python -m pytest tests -q` from `backend/`: **28 passed**.
 - `docker compose config` from repo root: **passed**.
-- `docker compose up -d postgres redis chroma minio`: **blocked locally**. Docker reported that the Windows Docker daemon pipe was unavailable (`//./pipe/docker_engine`), so local container startup and `/readyz` against real stores could not be validated in this shell.
+- `docker compose up`: **passed after local Docker environment was restored**.
+- PostgreSQL, Redis, ChromaDB, MinIO, and FastAPI health/readiness: **healthy**.
 
 Deferred:
 
-- Staging environment validation is pending access to a staging runtime.
 - Database migrations and schema implementation remain Sprint 1 scope.
 - Auth/session/domain endpoint behavior remains future sprint scope per roadmap.
 
 ---
 
-## 9) Immediate Next Tracking Actions
+## 9) Sprint 1 Status
 
-1. Resolve local Docker daemon access and validate `docker compose up` plus `/readyz` against real stores.
-2. Run the same Sprint 0 stack validation in staging when a staging runtime is available.
-3. Capture first measured p95 metrics once Phase 4/5 paths are functional.
-4. Update this file at each phase boundary with status, date, and validation evidence.
+**Date:** 2026-07-15
+
+Status:
+
+- Sprint 1 is active.
+- Implementation has not yet been recorded in this tracker.
+- Sprint 1 scope is limited to the Persistence Core from the roadmap: SQLAlchemy async configuration, database sessions, declarative models from Section 15, Alembic migrations, repository infrastructure, database DI, utility layer, persistence tests, migration tests, and checkpoint persistence storage.
+
+Out of scope for Sprint 1:
+
+- Authentication behavior, JWT issuance, session API behavior, LangGraph runtime, Knowledge Graph ingestion logic, search/retrieval/embedding pipelines, teaching/quiz/adaptive behavior, analytics/dashboard behavior, and non-persistence API endpoints.
+
+Immediate next tracking actions:
+
+1. Implement Sprint 1 persistence core.
+2. Verify all existing tests still pass.
+3. Verify Alembic migrations apply from a clean database.
+4. Verify Docker Compose remains healthy after persistence changes.
+5. Update this file with Sprint 1 implementation evidence before requesting approval for Sprint 2.
 

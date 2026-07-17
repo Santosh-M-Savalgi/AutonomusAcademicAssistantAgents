@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v2 import (
+    adaptive,
     analytics,
     auth,
     dashboard,
@@ -26,3 +27,4 @@ router.include_router(retrieval.router)
 router.include_router(session.router)
 router.include_router(dashboard.router)
 router.include_router(analytics.router)
+router.include_router(adaptive.router)

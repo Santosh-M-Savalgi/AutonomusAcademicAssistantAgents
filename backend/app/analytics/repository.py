@@ -143,12 +143,9 @@ async def get_quiz_attempt_stats(
     """
     query = select(
         func.count(QuizAttempt.id).label("total"),
-        func.sum(
-            func.cast(
-                QuizAttempt.submitted_at.isnot(None),
-                type_=type(func.count(1)),
-            )
-        ),
+        func.count(QuizAttempt.id).filter(
+            QuizAttempt.submitted_at.isnot(None)
+        ).label("completed"),
         func.avg(QuizAttempt.score).label("avg_score"),
     ).where(QuizAttempt.user_id == user_id)
 
@@ -289,14 +286,14 @@ async def get_session_stats(
     result = await db.execute(
         select(
             func.count(Session.id).label("total"),
-            func.sum(
-                func.cast(Session.status == SessionStatus.active.value, type_=type(func.count(1)))
+            func.count(Session.id).filter(
+                Session.status == SessionStatus.active.value
             ).label("active"),
-            func.sum(
-                func.cast(Session.status == SessionStatus.completed.value, type_=type(func.count(1)))
+            func.count(Session.id).filter(
+                Session.status == SessionStatus.completed.value
             ).label("completed"),
-            func.sum(
-                func.cast(Session.status == SessionStatus.idle.value, type_=type(func.count(1)))
+            func.count(Session.id).filter(
+                Session.status == SessionStatus.idle.value
             ).label("idle"),
         ).where(Session.user_id == user_id)
     )

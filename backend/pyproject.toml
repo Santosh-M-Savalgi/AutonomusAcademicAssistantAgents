@@ -27,6 +27,7 @@ dependencies = [
   "opentelemetry-instrumentation-httpx>=0.43b0,<1.0",
   "opentelemetry-instrumentation-redis>=0.43b0,<1.0",
   "opentelemetry-instrumentation-sqlalchemy>=0.43b0,<1.0",
+  "email-validator>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -98,10 +98,24 @@ body {
   color: var(--color-primary);
 }
 
+@keyframes dash {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @layer base {
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
     font-weight: 600;
     letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .animate-dash {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: dash 1.5s ease-in-out forwards;
   }
 }

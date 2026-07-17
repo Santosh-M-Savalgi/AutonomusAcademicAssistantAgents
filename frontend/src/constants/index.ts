@@ -8,6 +8,13 @@ export const ROUTES = {
   ANALYTICS: '/analytics',
   RESOURCES: '/resources',
   SETTINGS: '/settings',
+  LESSON: '/lesson/:topicId',
+  LESSON_BUILD: '/lesson',
+  QUIZ: '/quiz/:topicId',
+  QUIZ_BUILD: '/quiz',
+  QUIZ_RESULTS: '/quiz-results/:topicId',
+  QUIZ_RESULTS_BUILD: '/quiz-results',
+  PROFILE: '/profile',
 } as const;
 
 export const API_ENDPOINTS = {

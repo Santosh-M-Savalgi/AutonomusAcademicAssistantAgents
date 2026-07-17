@@ -4,7 +4,7 @@ Import this package to ensure all models are registered on ``Base.metadata``
 so Alembic can autogenerate migrations.
 """
 
-from app.db.models.base import Base, TimestampMixin
+from app.db.models.base import Base, IdMixin, TimestampMixin
 from app.db.models.enums import (
     BloomLevel,
     DifficultyLevel,

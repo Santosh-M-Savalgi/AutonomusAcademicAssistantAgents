@@ -10,11 +10,11 @@ from sqlalchemy import DateTime as SATime
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import Base
+from app.db.models.base import Base, IdMixin
 from app.db.models.enums import LearningMode, SessionStatus
 
 
-class ConceptMastery(Base):
+class ConceptMastery(Base):  # Composite PK (user_id, topic_id) — no IdMixin
     """Per-user, per-topic mastery tracking (Section 15.3)."""
 
     __tablename__ = "concept_mastery"
@@ -42,7 +42,7 @@ class ConceptMastery(Base):
         )
 
 
-class Session(Base):
+class Session(Base, IdMixin):
     """Student learning session (Section 18)."""
 
     __tablename__ = "sessions"
@@ -71,7 +71,7 @@ class Session(Base):
         return f"<Session user={self.user_id!r} status={self.status.value!r}>"
 
 
-class Preference(Base):
+class Preference(Base):  # PK is user_id — no IdMixin
     """Per-user UI/notification preferences (Section 15.3)."""
 
     __tablename__ = "preferences"
@@ -87,7 +87,7 @@ class Preference(Base):
         return f"<Preference user={self.user_id!r}>"
 
 
-class AnalyticsEvent(Base):
+class AnalyticsEvent(Base, IdMixin):
     """Append-only analytics event log, partitioned monthly (Section 15.3, 19)."""
 
     __tablename__ = "analytics_events"

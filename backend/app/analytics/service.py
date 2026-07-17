@@ -13,7 +13,7 @@ It does NOT contain data access logic — that lives in repository.py.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,7 +123,7 @@ class AnalyticsService:
 
         # Calculate study time
         now = datetime.now(timezone.utc)
-        week_start = now - datetime.timedelta(days=now.weekday())
+        week_start = now - timedelta(days=now.weekday())
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         weekly_time = calculate_time_spent(

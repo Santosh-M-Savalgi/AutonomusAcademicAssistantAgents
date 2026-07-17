@@ -13,14 +13,14 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, fun
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import Base, TimestampMixin
+from app.db.models.base import Base, IdMixin, TimestampMixin
 from app.db.models.enums import LearningMode, UserRole
 
 if TYPE_CHECKING:
     pass
 
 
-class User(Base, TimestampMixin):
+class User(Base, IdMixin, TimestampMixin):
     __tablename__ = "users"
 
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
@@ -44,7 +44,7 @@ class User(Base, TimestampMixin):
         return f"<User {self.email!r}>"
 
 
-class StudentProfile(Base):
+class StudentProfile(Base):  # PK is user_id — no IdMixin
     __tablename__ = "student_profiles"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -71,7 +71,7 @@ class StudentProfile(Base):
         return f"<StudentProfile user_id={self.user_id!r}>"
 
 
-class RefreshToken(Base):
+class RefreshToken(Base, IdMixin):
     __tablename__ = "refresh_tokens"
 
     user_id: Mapped[uuid.UUID] = mapped_column(

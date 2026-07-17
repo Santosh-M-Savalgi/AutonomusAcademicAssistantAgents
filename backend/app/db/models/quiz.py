@@ -10,11 +10,11 @@ from sqlalchemy import DateTime as SATime
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import Base
+from app.db.models.base import Base, IdMixin
 from app.db.models.enums import BloomLevel, QuizDifficultyLevel
 
 
-class QuizQuestion(Base):
+class QuizQuestion(Base, IdMixin):
     """MCQ question bank entry (Section 13.3)."""
 
     __tablename__ = "quiz_questions"
@@ -51,7 +51,7 @@ class QuizQuestion(Base):
         return f"<QuizQuestion topic={self.topic_id!r} concept={self.concept_tag!r}>"
 
 
-class QuizAttempt(Base):
+class QuizAttempt(Base, IdMixin):
     """A single quiz submission by a student (Section 15.3)."""
 
     __tablename__ = "quiz_attempts"
@@ -80,7 +80,7 @@ class QuizAttempt(Base):
         return f"<QuizAttempt user={self.user_id!r} topic={self.topic_id!r} score={self.score}>"
 
 
-class QuizAttemptAnswer(Base):
+class QuizAttemptAnswer(Base, IdMixin):
     """Individual answer within a quiz attempt."""
 
     __tablename__ = "quiz_attempt_answers"

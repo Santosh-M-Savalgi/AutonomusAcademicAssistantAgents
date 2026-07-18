@@ -213,3 +213,126 @@ class TestMissingPrerequisites:
         assert path.completed_topics == 2
         assert path.remaining_topics == 0
         assert path.is_complete
+
+
+# ── Graph validation tests ──────────────────────────────────────────────────
+
+
+class TestGraphWithDanglingEdge:
+    """Edge references a node not in graph.nodes — must raise ValueError."""
+
+    def test_dangling_edge_raises_value_error(self) -> None:
+        a = _make_node("A")
+        b_id = uuid.uuid4()  # B not added as a node
+        kg = KnowledgeGraph()
+        kg.add_node(a)
+        kg.add_edge(_make_edge(a.id, b_id))  # dangling: child b_id not in nodes
+
+        svc = LearningPathService()
+        with pytest.raises(ValueError, match="Graph inconsistency"):
+            svc.generate(kg, [a.id], {})
+
+    def test_multiple_dangling_edges(self) -> None:
+        a = _make_node("A")
+        b_id = uuid.uuid4()
+        c_id = uuid.uuid4()
+        kg = KnowledgeGraph()
+        kg.add_node(a)
+        kg.add_edge(_make_edge(a.id, b_id))
+        kg.add_edge(_make_edge(a.id, c_id))
+
+        svc = LearningPathService()
+        with pytest.raises(ValueError):
+            svc.generate(kg, [a.id], {})
+
+    def test_normal_graph_no_raise(self) -> None:
+        a = _make_node("A")
+        b = _make_node("B")
+        kg = KnowledgeGraph.build([a, b], [_make_edge(a.id, b.id)])
+
+        svc = LearningPathService()
+        path = svc.generate(kg, [a.id, b.id], {})
+        assert path.total_topics == 2
+
+
+class TestGraphWithDisconnectedNodes:
+    """Nodes with no edges at all — should still work."""
+
+    def test_disconnected_nodes_in_syllabus(self) -> None:
+        a = _make_node("A")
+        b = _make_node("B")
+        c = _make_node("C")
+        kg = KnowledgeGraph.build([a, b, c], [])
+
+        svc = LearningPathService()
+        path = svc.generate(kg, [a.id, b.id, c.id], {})
+        assert path.total_topics == 3
+        assert all(not s.is_blocked for s in path.steps)
+
+
+class TestBuildGraphFromModels:
+    """Test the build_graph_from_models bridge function."""
+
+    @pytest.fixture
+    def sqlalchemy_mock(self) -> tuple:
+        """Create mock objects mimicking SQLAlchemy model instances."""
+        from unittest.mock import MagicMock
+
+        t1 = MagicMock()
+        t1.id = uuid.uuid4()
+        t1.name = "Topic 1"
+        t1.slug = "topic-1"
+        t1.difficulty = "beginner"
+        t1.learning_depth = 15
+        t1.mastery_threshold = 0.75
+
+        t2 = MagicMock()
+        t2.id = uuid.uuid4()
+        t2.name = "Topic 2"
+        t2.slug = "topic-2"
+        t2.difficulty = "beginner"
+        t2.learning_depth = 15
+        t2.mastery_threshold = 0.75
+
+        e1 = MagicMock()
+        e1.id = uuid.uuid4()
+        e1.parent_topic_id = t2.id
+        e1.child_topic_id = t1.id
+        e1.relationship_type = "direct_prerequisite"
+        e1.weight = 1.0
+
+        return t1, t2, e1
+
+    def test_valid_graph(self, sqlalchemy_mock: tuple) -> None:
+        from app.services.knowledge_graph_service import build_graph_from_models
+
+        t1, t2, e1 = sqlalchemy_mock
+        kg = build_graph_from_models([t1, t2], [e1])
+        assert kg.node_count == 2
+        assert kg.edge_count == 1
+
+    def test_dangling_child_skipped(self, sqlalchemy_mock: tuple) -> None:
+        from app.services.knowledge_graph_service import build_graph_from_models
+
+        t1, t2, e1 = sqlalchemy_mock
+        # Only include t2, not t1 — edge references t1 as child
+        kg = build_graph_from_models([t2], [e1])
+        assert kg.node_count == 1
+        assert kg.edge_count == 0  # edge skipped because child missing
+
+    def test_dangling_parent_skipped(self, sqlalchemy_mock: tuple) -> None:
+        from app.services.knowledge_graph_service import build_graph_from_models
+
+        t1, t2, e1 = sqlalchemy_mock
+        # Only include t1, not t2 — edge references t2 as parent
+        kg = build_graph_from_models([t1], [e1])
+        assert kg.node_count == 1
+        assert kg.edge_count == 0
+
+    def test_non_uuid_type_raises(self, sqlalchemy_mock: tuple) -> None:
+        from app.services.knowledge_graph_service import build_graph_from_models
+
+        t1, t2, e1 = sqlalchemy_mock
+        e1.parent_topic_id = "not-a-uuid"
+        with pytest.raises(ValueError, match="parent_topic_id is str"):
+            build_graph_from_models([t1, t2], [e1])

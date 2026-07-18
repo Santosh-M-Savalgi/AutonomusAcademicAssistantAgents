@@ -287,9 +287,13 @@ class TestExceptions:
 
 class TestErrorResponse:
     def test_error_response_shape(self) -> None:
-        resp = _error_response("DatabaseError", "DB down", 500)
-        assert resp["error"] == "DatabaseError"
+        from app.core.exceptions import DatabaseError
+        exc = DatabaseError("DB down")
+        resp = _error_response(exc)
+        assert resp["error_code"] == "DATABASE_ERROR"
         assert resp["message"] == "DB down"
+        assert not resp["success"]
+        assert resp["retryable"] is True
         assert "request_id" in resp
 
 
@@ -302,7 +306,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 404
         body = json.loads(response.body)
-        assert body["error"] == "HTTPException"
+        assert body["error_code"] == "NOT_FOUND"
         assert body["message"] == "Not found"
 
     @pytest.mark.asyncio
@@ -313,7 +317,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 422
         body = json.loads(response.body)
-        assert body["error"] == "ValidationError"
+        assert body["error_code"] == "VALIDATION_ERROR"
 
     @pytest.mark.asyncio
     async def test_handles_database_error(self) -> None:
@@ -322,7 +326,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 500
         body = json.loads(response.body)
-        assert body["error"] == "DatabaseError"
+        assert body["error_code"] == "DATABASE_ERROR"
         assert body["message"] == "DB down"
 
     @pytest.mark.asyncio
@@ -332,7 +336,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 503
         body = json.loads(response.body)
-        assert body["error"] == "RedisError"
+        assert body["error_code"] == "CACHE_UNAVAILABLE"
 
     @pytest.mark.asyncio
     async def test_handles_provider_error(self) -> None:
@@ -341,7 +345,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 502
         body = json.loads(response.body)
-        assert body["error"] == "ProviderError"
+        assert body["error_code"] == "AI_PROVIDER_ERROR"
 
     @pytest.mark.asyncio
     async def test_handles_unknown_exception(self) -> None:
@@ -350,7 +354,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 500
         body = json.loads(response.body)
-        assert body["error"] == "UnknownException"
+        assert body["error_code"] == "UNKNOWN_ERROR"
 
     @pytest.mark.asyncio
     async def test_handles_generic_exception(self) -> None:
@@ -360,7 +364,7 @@ class TestExceptionHandler:
         response = await global_exception_handler(request, exc)
         assert response.status_code == 500
         body = json.loads(response.body)
-        assert body["error"] == "UnknownException"
+        assert body["error_code"] == "UNKNOWN_ERROR"
 
     def test_register_exception_handlers(self) -> None:
         """register_exception_handlers can be called on an app instance."""

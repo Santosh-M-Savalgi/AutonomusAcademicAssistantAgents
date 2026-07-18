@@ -36,12 +36,27 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
 
+    # Startup summary — use standard Python logging msg+args format
+    logger.info(
+        "startup_complete app=%s version=%s env=%s host=%s port=%s log_level=%s rate_limit=%s slow_threshold=%dms",
+        settings.app_name,
+        settings.app_version,
+        settings.app_env,
+        settings.api_host,
+        settings.api_port,
+        settings.log_level,
+        settings.enable_rate_limit,
+        settings.slow_request_threshold_ms,
+    )
+
     # Validate configuration on startup
     config_status = validate_configuration()
     if config_status["status"] == "invalid":
         logger.error("Configuration validation failed: %s", config_status.get("errors"))
         # Log but don't crash — allow the app to start for debugging
         # Production deployments should gate on this
+    else:
+        logger.info("Configuration validation passed")
 
     yield
 

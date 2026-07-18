@@ -15,6 +15,8 @@ export const ROUTES = {
   QUIZ_RESULTS: '/quiz-results/:topicId',
   QUIZ_RESULTS_BUILD: '/quiz-results',
   PROFILE: '/profile',
+  /** Learning Goal screen — user types what they want to learn */
+  GOAL: '/goal',
 } as const;
 
 export const API_ENDPOINTS = {

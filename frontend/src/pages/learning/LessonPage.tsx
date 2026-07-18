@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Card, Button, Badge, Skeleton, Progress } from '@/components/ui'
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui'
@@ -18,6 +18,7 @@ import {
   FileText,
   GraduationCap,
   BrainCircuit,
+  Video,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { formatTime } from '@/utils/cn'
@@ -358,6 +359,50 @@ function TeachingCardView({
   )
 }
 
+function YouTubeSuggestions({
+  suggestions,
+}: {
+  suggestions: { title: string; url: string; video_id: string }[] | null | undefined
+}) {
+  if (!suggestions || suggestions.length === 0) return null
+
+  return (
+    <motion.div variants={itemVariants}>
+      <Card className="border-l-4 border-l-danger/40 relative overflow-hidden" padding="lg">
+        <div className="flex items-start gap-4 relative z-10">
+          <div className="shrink-0 mt-1">
+            <div className="h-10 w-10 rounded-lg bg-danger-muted flex items-center justify-center">
+              <Video className="h-5 w-5 text-red-500" />
+            </div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-display font-semibold text-text-primary mb-3">
+              Related Videos
+            </h2>
+            <ul className="space-y-3">
+              {suggestions.map((yt) => (
+                <li key={yt.video_id || yt.url}>
+                  <a
+                    href={yt.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group flex items-start gap-3 text-sm text-text-secondary hover:text-text-primary transition-colors"
+                  >
+                    <Video className="h-4 w-4 text-red-500 shrink-0 mt-0.5 group-hover:scale-110 transition-transform" />
+                    <span className="group-hover:underline underline-offset-2">
+                      {yt.title}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </Card>
+    </motion.div>
+  )
+}
+
 function NavigationFooter({
   hasPrevious,
   hasNext,
@@ -464,7 +509,17 @@ function FloatingProgress({
 export function LessonPage() {
   const { topicId } = useParams<{ topicId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const generateLesson = useGenerateLesson()
+
+  // Read topic data from navigation state (populated by auto-advance)
+  const navState = location.state as {
+    topicId?: string
+    topicName?: string
+    topicDescription?: string
+    topicDifficulty?: string
+    sessionId?: string
+  } | null
 
   const [viewedCards, setViewedCards] = useState<number>(0)
   const [hasScrolledPast, setHasScrolledPast] = useState<Set<number>>(new Set())
@@ -479,7 +534,10 @@ export function LessonPage() {
     if (topicId) {
       generateLesson.mutate({
         topic_id: topicId,
-        topic_name: topicId, // fallback; can be refined
+        topic_name: navState?.topicName ?? topicId,
+        topic_description: navState?.topicDescription ?? '',
+        topic_difficulty: navState?.topicDifficulty ?? 'beginner',
+        session_id: navState?.sessionId ?? '',
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -622,6 +680,9 @@ export function LessonPage() {
                 </div>
               ))}
             </motion.div>
+
+            {/* YouTube Suggestions */}
+            <YouTubeSuggestions suggestions={lesson.youtube_suggestions} />
 
             {/* Navigation Footer */}
             <NavigationFooter

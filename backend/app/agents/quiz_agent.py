@@ -1,2 +1,0 @@
-"""Quiz agent placeholder."""
-

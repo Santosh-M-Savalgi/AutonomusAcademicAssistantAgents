@@ -278,32 +278,6 @@ async def get_topic_children(
     }
 
 
-@router.get("/stats")
-async def get_graph_stats(
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> GraphStatsResponse:
-    """Graph-level statistics: size, cycles, topological ordering."""
-    from sqlalchemy import select
-
-    topics_result = await db.execute(select(Topic))
-    topics = list(topics_result.scalars().all())
-
-    edges_result = await db.execute(select(TopicEdge))
-    edges = list(edges_result.scalars().all())
-
-    kg = build_graph_from_models(topics, edges)
-    topo = kg.topological_sort()
-
-    return GraphStatsResponse(
-        node_count=kg.node_count,
-        edge_count=kg.edge_count,
-        has_cycle=kg.has_cycle(),
-        cycle_path=[str(nid) for nid in kg.find_cycle_path()]
-        if kg.find_cycle_path() else None,
-        topological_order=[str(nid) for nid in topo] if topo else None,
-    )
-
-
 @router.post("/learning-path")
 async def get_learning_path(
     body: dict,

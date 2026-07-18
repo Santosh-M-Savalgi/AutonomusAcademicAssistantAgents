@@ -6,6 +6,9 @@ The application must never call google-genai directly.
 
 from __future__ import annotations
 
+import logging
+import asyncio
+
 from app.llm.providers.base import (
     BaseProvider,
     ModelCapability,
@@ -15,6 +18,8 @@ from app.llm.providers.base import (
     ProviderResponse,
     ProviderTimeoutError,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class GeminiProvider(BaseProvider):
@@ -67,64 +72,76 @@ class GeminiProvider(BaseProvider):
         *,
         system_prompt: str | None = None,
         temperature: float | None = None,
-        max_tokens: int | None = None,
+        max_tokens: int | None = None
     ) -> ProviderResponse:
         client = self._lazy_client()
         temp = temperature if temperature is not None else self.config.temperature
         tokens = max_tokens if max_tokens is not None else self.config.max_tokens
-        import asyncio
+        max_attempts = self.config.retry_count + 1
 
-        try:
-            # Build contents
-            contents = []
-            if system_prompt:
-                contents.append({"role": "user", "parts": [{"text": system_prompt + "\n\n" + prompt}]})
-            else:
-                contents.append({"role": "user", "parts": [{"text": prompt}]})
+        config_kwargs = {
+            "temperature": temp,
+            "max_output_tokens": tokens
+        }
 
-            config_kwargs = {
-                "temperature": temp,
-                "max_output_tokens": tokens,
-            }
-
-            response = await asyncio.to_thread(
-                lambda: client.models.generate_content(
-                    model=self.config.model_name,
-                    contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                    config=config_kwargs,
-                )
-            )
-
-            if response is None or response.text is None:
-                raise ProviderError(
-                    "Gemini returned empty response",
-                    provider=self.provider_name,
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await asyncio.to_thread(
+                    lambda: client.models.generate_content(
+                        model=self.config.model_name,
+                        contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                        config=config_kwargs,
+                    )
                 )
 
-            return ProviderResponse(
-                content=response.text,
-                model_used=self.config.model_name,
-                finish_reason=str(getattr(response, "finish_reason", "stop")),
-                usage=None,
-                raw={"candidates": getattr(response, "candidates", None)},
-            )
+                if response is None or response.text is None:
+                    raise ProviderError(
+                        "Gemini returned empty response",
+                        provider=self.provider_name,
+                    )
 
-        except ProviderError:
-            raise
-        except Exception as exc:
-            exc_str = str(exc).lower()
-            if "timeout" in exc_str or "deadline" in exc_str:
-                raise ProviderTimeoutError(
-                    provider=self.provider_name,
-                    timeout_seconds=self.config.timeout_seconds,
-                ) from exc
-            if "429" in exc_str or "rate" in exc_str or "resource_exhausted" in exc_str:
-                raise ProviderRateLimitError(provider=self.provider_name) from exc
-            raise ProviderError(
-                f"Gemini generation failed: {exc}",
-                provider=self.provider_name,
-                cause=exc,
-            )
+                return ProviderResponse(
+                    content=response.text,
+                    model_used=self.config.model_name,
+                    finish_reason=str(getattr(response, "finish_reason", "stop")),
+                    usage=None,
+                    raw={"candidates": getattr(response, "candidates", None)},
+                )
+
+            except (ProviderError, ProviderTimeoutError, ProviderRateLimitError):
+                raise
+            except Exception as exc:
+                last_exc = exc
+                exc_str = str(exc).lower()
+                # Re-raise immediately for timeout/rate-limit
+                if "timeout" in exc_str or "deadline" in exc_str:
+                    raise ProviderTimeoutError(
+                        provider=self.provider_name,
+                        timeout_seconds=self.config.timeout_seconds,
+                    ) from exc
+                if "429" in exc_str or "rate" in exc_str or "resource_exhausted" in exc_str:
+                    raise ProviderRateLimitError(provider=self.provider_name) from exc
+
+                if attempt < max_attempts:
+                    delay = 2 ** attempt  # exponential backoff: 2s, 4s, 8s
+                    LOGGER.warning(
+                        "Gemini attempt %d/%d failed, retrying in %ds: %s",
+                        attempt, max_attempts, delay, exc,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    LOGGER.error(
+                        "Gemini all %d attempts exhausted: %s",
+                        max_attempts, exc,
+                    )
+
+        # All attempts exhausted
+        raise ProviderError(
+            f"Gemini generation failed after {max_attempts} attempts: {last_exc}",
+            provider=self.provider_name,
+            cause=last_exc,
+        )
 
     async def generate_structured(
         self,
@@ -176,6 +193,14 @@ class GeminiProvider(BaseProvider):
         except ProviderError:
             raise
         except Exception as exc:
+            exc_str = str(exc).lower()
+            if "timeout" in exc_str or "deadline" in exc_str:
+                raise ProviderTimeoutError(
+                    provider=self.provider_name,
+                    timeout_seconds=self.config.timeout_seconds,
+                ) from exc
+            if "429" in exc_str or "rate" in exc_str or "resource_exhausted" in exc_str:
+                raise ProviderRateLimitError(provider=self.provider_name) from exc
             raise ProviderError(
                 f"Gemini structured generation failed: {exc}",
                 provider=self.provider_name,

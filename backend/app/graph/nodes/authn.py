@@ -1,2 +1,0 @@
-"""Auth gate node placeholder."""
-

@@ -18,6 +18,42 @@ import type {
   SessionData,
 } from '@/types/learning'
 
+// ─── Types for Learning Goal API ─────────────────────────────────
+
+interface LearningGoalRequest {
+  goal: string
+}
+
+interface TopicInfo {
+  id: string
+  name: string
+  slug: string
+  description: string
+  difficulty: string
+  prerequisites: string[]
+}
+
+interface RoadmapStepInfo {
+  topic_id: string
+  topic_name: string
+  topic_slug: string
+  difficulty: string
+  depth: number
+  mastery_score: number
+  is_completed: boolean
+  is_blocked: boolean
+  unmet_prerequisites: string[]
+}
+
+interface LearningGoalResponse {
+  syllabus_id: string
+  session_id: string
+  title: string
+  topics: TopicInfo[]
+  roadmap: RoadmapStepInfo[]
+  roadmap_mode: string
+}
+
 // ─── Dashboard Hooks ──────────────────────────────────────────
 
 export function useDashboard() {
@@ -153,6 +189,60 @@ export function useWeakConcepts(
       return data
     },
     enabled: Object.keys(masteryScores).length > 0,
+  })
+}
+
+// ─── Learning Roadmap Hook ────────────────────────────────────
+
+export interface RoadmapResponse {
+  syllabus_id: string
+  session_id: string
+  learning_goal: string
+  title: string
+  topics: TopicInfo[]
+  roadmap: RoadmapStepInfo[]
+  roadmap_mode: string
+  progress: Array<{
+    topic_id: string
+    topic_name: string
+    topic_slug: string
+    difficulty: string
+    mastery_score: number
+    is_completed: boolean
+    quiz_attempts: number
+  }>
+  overall_progress_pct: number
+  completed_count: number
+  total_count: number
+  current_topic_id: string | null
+  current_topic_name: string | null
+  next_topic_id: string | null
+  next_topic_name: string | null
+}
+
+export function useRoadmap(syllabusId: string) {
+  return useQuery<RoadmapResponse>({
+    queryKey: ['learning', 'roadmap', syllabusId],
+    queryFn: async () => {
+      const { data } = await apiClient.get<RoadmapResponse>(`/api/v2/learning/${syllabusId}`)
+      return data
+    },
+    enabled: !!syllabusId,
+    staleTime: 30_000,  // 30s — refetch after evaluations
+  })
+}
+
+// ─── Learning Goal Hook ────────────────────────────────────────
+
+export function useCreateLearningGoal() {
+  return useMutation({
+    mutationFn: async (params: LearningGoalRequest) => {
+      const { data } = await apiClient.post<LearningGoalResponse>(
+        '/api/v2/learning/goal',
+        params,
+      )
+      return data
+    },
   })
 }
 

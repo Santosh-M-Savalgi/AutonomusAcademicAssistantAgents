@@ -1,10 +1,13 @@
-import { useState, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useMemo, useCallback } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Card, Button, Badge, SectionHeader, Progress } from '@/components/ui'
 import { LoadingState, ErrorState, EmptyState } from '@/components/ui'
 import { LearningRoadmap } from '@/components/LearningRoadmap'
-import { useLearningPath, useAdaptiveStatus } from '@/services/learningApi'
+import { useRoadmap } from '@/services/learningApi'
+import { useLearningJourney } from '@/contexts/LearningContext'
+import type { LearningPath, LearningPathStep } from '@/types/learning'
+import { ROUTES } from '@/constants'
 import {
   BookOpen,
   Map,
@@ -18,7 +21,6 @@ import { cn } from '@/utils/cn'
 // ─── Layout Constants ──────────────────────────────────────────────
 
 const modes = ['Standard', 'Beginner', 'Fast Track'] as const
-type LearningMode = (typeof modes)[number]
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -39,54 +41,72 @@ function getModeIntensity(mode: string): string {
 
 export function RoadmapPage() {
   const navigate = useNavigate()
-  const [selectedMode, setSelectedMode] = useState<string>(modes[0])
+  const location = useLocation()
+  const { syllabusId } = useLearningJourney()
 
-  // ── Data hooks ──────────────────────────────────────────────────
+  // ── Navigation state (from LearningGoalPage — first-load fast path) ──
+  const navState = location.state as {
+    syllabusId?: string
+    sessionId?: string
+    title?: string
+    topics?: Array<{
+      id: string; name: string; slug: string; description: string
+      difficulty: string; prerequisites: string[]
+    }>
+    roadmap?: Array<{
+      topic_id: string; topic_name: string; topic_slug: string
+      difficulty: string; depth: number; mastery_score: number
+      is_completed: boolean; is_blocked: boolean; unmet_prerequisites: string[]
+    }>
+    roadmapMode?: string
+  } | null
+
+  // ── API: fetch roadmap from backend (primary data source) ──────
   const {
-    data: adaptiveStatus,
-    isLoading: statusLoading,
-    isError: statusError,
-    refetch: refetchStatus,
-  } = useAdaptiveStatus()
+    data: roadmapData,
+    isLoading,
+    isError,
+    refetch,
+  } = useRoadmap(syllabusId)
 
-  // Use adaptive-status topic IDs if available, otherwise empty array
-  // so the learning-path query stays enabled only when we have data.
-  const topicIds = useMemo<string[]>(() => {
-    if (adaptiveStatus?.current_topic_id) return [adaptiveStatus.current_topic_id]
-    return []
-  }, [adaptiveStatus])
-
-  const masteryScores = useMemo(() => {
-    if (!adaptiveStatus) return {}
-    // Build a minimal mastery-scores map from the status distribution
-    return Object.fromEntries(
-      Object.entries(adaptiveStatus.state_distribution ?? {}).map(([k, v]) => [
-        k,
-        typeof v === 'number' ? v : 0,
-      ])
-    )
-  }, [adaptiveStatus])
-
-  const {
-    data: learningPath,
-    isLoading: pathLoading,
-    isError: pathError,
-    refetch: refetchPath,
-  } = useLearningPath(topicIds, masteryScores, selectedMode.toLowerCase())
-
-  // ── Derived values ──────────────────────────────────────────────
-  const isLoading = statusLoading || pathLoading
-  const isError = statusError || pathError
+  // ── Derive learning path from API data ──────────────────────────
+  const learningPath: LearningPath | null = useMemo(() => {
+    if (!roadmapData?.roadmap) return null
+    const steps = roadmapData.roadmap
+    return {
+      mode: roadmapData.roadmap_mode,
+      total_topics: roadmapData.total_count,
+      completed_topics: roadmapData.completed_count,
+      remaining_topics: roadmapData.total_count - roadmapData.completed_count,
+      next_topic_id: roadmapData.next_topic_id,
+      is_complete: roadmapData.completed_count === roadmapData.total_count,
+      steps: steps.map((r): LearningPathStep => ({
+        topic_id: r.topic_id,
+        topic_name: r.topic_name,
+        topic_slug: r.topic_slug,
+        difficulty: r.difficulty,
+        depth: r.depth,
+        mastery_score: r.mastery_score,
+        is_completed: r.is_completed,
+        is_blocked: r.is_blocked,
+        unmet_prerequisites: r.unmet_prerequisites,
+      })),
+    }
+  }, [roadmapData])
 
   const completedCount = learningPath?.completed_topics ?? 0
   const totalTopics = learningPath?.total_topics ?? 0
   const remainingCount = learningPath?.remaining_topics ?? 0
-  const overallProgress = totalTopics > 0 ? (completedCount / totalTopics) * 100 : 0
+  const overallProgress = roadmapData?.overall_progress_pct ?? (
+    totalTopics > 0 ? (completedCount / totalTopics) * 100 : 0
+  )
 
-  const currentTopicId = adaptiveStatus?.current_topic_id ?? null
+  const currentTopicId = roadmapData?.current_topic_id ?? learningPath?.next_topic_id ?? null
+  const currentTopicName = roadmapData?.current_topic_name ?? null
   const steps = learningPath?.steps ?? []
+  const learningGoal = roadmapData?.learning_goal ?? ''
+  const selectedMode = roadmapData?.roadmap_mode ?? 'standard'
 
-  // Placeholder stats when no real data exists
   const quickStats = useMemo(
     () => ({
       avgMastery: steps.length
@@ -103,17 +123,26 @@ export function RoadmapPage() {
   // ── Callbacks ───────────────────────────────────────────────────
   const handleTopicClick = useCallback(
     (topicId: string) => {
-      navigate(`/lesson/${topicId}`)
+      const step = steps.find((s) => s.topic_id === topicId)
+      const topic = roadmapData?.topics?.find((t) => t.id === topicId)
+      navigate(`/lesson/${topicId}`, {
+        state: {
+          topicId,
+          topicName: step?.topic_name ?? topic?.name ?? topicId,
+          topicDescription: topic?.description ?? '',
+          topicDifficulty: step?.difficulty ?? 'beginner',
+          sessionId: roadmapData?.session_id ?? '',
+        },
+      })
     },
-    [navigate]
+    [navigate, steps, roadmapData]
   )
 
   const handleRetry = useCallback(() => {
-    refetchStatus()
-    refetchPath()
-  }, [refetchStatus, refetchPath])
+    refetch()
+  }, [refetch])
 
-  // ── Render: Loading ─────────────────────────────────────────────
+  // ── Loading ─────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#0A0D12] p-6">
@@ -122,7 +151,7 @@ export function RoadmapPage() {
     )
   }
 
-  // ── Render: Error ───────────────────────────────────────────────
+  // ── Error ───────────────────────────────────────────────────────
   if (isError) {
     return (
       <div className="min-h-screen bg-[#0A0D12] p-6">
@@ -135,13 +164,11 @@ export function RoadmapPage() {
     )
   }
 
-  // ── Render: Empty / no path ─────────────────────────────────────
-  if (!learningPath || steps.length === 0) {
+  // ── Empty: no syllabus yet ─────────────────────────────────────
+  if (!syllabusId) {
     return (
       <div className="min-h-screen bg-[#0A0D12]">
-        {/* Page header still visible so the user knows they are on the right page */}
         <div className="p-6 pb-0">
-          {/* ── Header ─────────────────── */}
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -162,13 +189,12 @@ export function RoadmapPage() {
             </div>
           </motion.div>
         </div>
-
         <EmptyState
           title="No learning path yet"
           description="Start learning to build your personalized roadmap. Your completed topics and progress will appear here as you go."
           icon={<Map className="h-12 w-12" />}
           action={
-            <Button onClick={() => navigate('/learn')}>
+            <Button onClick={() => navigate(ROUTES.GOAL)}>
               <BookOpen className="h-4 w-4 mr-2" />
               Start learning
             </Button>
@@ -178,7 +204,47 @@ export function RoadmapPage() {
     )
   }
 
-  // ── Render: Main Page ──────────────────────────────────────────
+  // ── Empty: data loaded but no steps ─────────────────────────────
+  if (steps.length === 0) {
+    return (
+      <div className="min-h-screen bg-[#0A0D12]">
+        <div className="p-6 pb-0">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35 }}
+          >
+            <div className="flex items-center gap-3 mb-1">
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/10 text-primary">
+                <Map className="h-5 w-5" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-display font-bold text-[#E7EAF0]">
+                  Learning Roadmap
+                </h1>
+                <p className="text-sm text-[#8A94A6]">
+                  Your personalized learning journey
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+        <EmptyState
+          title="No learning path yet"
+          description="Start learning to build your personalized roadmap. Your completed topics and progress will appear here as you go."
+          icon={<Map className="h-12 w-12" />}
+          action={
+            <Button onClick={() => navigate(ROUTES.GOAL)}>
+              <BookOpen className="h-4 w-4 mr-2" />
+              Start learning
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
+
+  // ── Main Content ────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#0A0D12]">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -196,7 +262,7 @@ export function RoadmapPage() {
               </div>
               <div>
                 <h1 className="text-2xl font-display font-bold text-[#E7EAF0]">
-                  Learning Roadmap
+                  {learningGoal || 'Learning Roadmap'}
                 </h1>
                 <p className="text-sm text-[#8A94A6]">
                   Your personalized learning journey
@@ -221,8 +287,7 @@ export function RoadmapPage() {
                 Overall Progress
               </span>
               <span className="font-mono text-xs text-[#8A94A6] tabular-nums">
-                {completedCount} / {totalTopics} ({Math.round(overallProgress)}
-                %)
+                {completedCount} / {totalTopics} ({Math.round(overallProgress)}%)
               </span>
             </div>
             <Progress
@@ -233,6 +298,24 @@ export function RoadmapPage() {
               aria-label={`Overall progress: ${Math.round(overallProgress)} percent`}
             />
           </div>
+
+          {/* Current topic indicator */}
+          {currentTopicName && (
+            <div className="mt-3 flex items-center gap-2 text-sm">
+              <span className="text-[#8A94A6]">Currently:</span>
+              <span className="font-medium text-[#E7EAF0]">{currentTopicName}</span>
+              {currentTopicId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleTopicClick(currentTopicId)}
+                  className="ml-2"
+                >
+                  Resume <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                </Button>
+              )}
+            </div>
+          )}
         </motion.div>
 
         {/* ── Stats Row ─────────────────────────────────────────── */}
@@ -243,24 +326,9 @@ export function RoadmapPage() {
           className="grid grid-cols-3 gap-3 mb-8"
         >
           {[
-            {
-              label: 'Total Topics',
-              value: totalTopics,
-              icon: BarChart3,
-              color: 'text-primary',
-            },
-            {
-              label: 'Completed',
-              value: completedCount,
-              icon: CheckCircle,
-              color: 'text-secondary',
-            },
-            {
-              label: 'Remaining',
-              value: remainingCount,
-              icon: BookOpen,
-              color: 'text-[#8A94A6]',
-            },
+            { label: 'Total Topics', value: totalTopics, icon: BarChart3, color: 'text-primary' },
+            { label: 'Completed', value: completedCount, icon: CheckCircle, color: 'text-secondary' },
+            { label: 'Remaining', value: remainingCount, icon: BookOpen, color: 'text-[#8A94A6]' },
           ].map((stat) => (
             <div
               key={stat.label}
@@ -289,12 +357,7 @@ export function RoadmapPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs text-[#8A94A6] truncate">{stat.label}</p>
-                <p
-                  className={cn(
-                    'text-lg font-display font-bold tabular-nums',
-                    stat.color
-                  )}
-                >
+                <p className={cn('text-lg font-display font-bold tabular-nums', stat.color)}>
                   {stat.value}
                 </p>
               </div>
@@ -304,7 +367,6 @@ export function RoadmapPage() {
 
         {/* ── Main Content: Roadmap + Sidebar ──────────────────── */}
         <div className="flex flex-col lg:flex-row gap-8">
-          {/* Roadmap (full width on mobile, flex-1 on desktop) */}
           <motion.div
             initial={{ opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
@@ -322,7 +384,7 @@ export function RoadmapPage() {
             </Card>
           </motion.div>
 
-          {/* Side panel (desktop only) */}
+          {/* Side panel */}
           <motion.aside
             initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
@@ -331,7 +393,6 @@ export function RoadmapPage() {
             aria-label="Roadmap details"
           >
             <div className="sticky top-6 space-y-5">
-              {/* ── Topic count summary ──────────────────────────── */}
               <Card padding="sm" className="bg-[#12161D] border-[#1E2430]">
                 <h3 className="text-sm font-display font-semibold text-[#E7EAF0] mb-3">
                   Path Summary
@@ -341,103 +402,15 @@ export function RoadmapPage() {
                     { label: 'Total topics', value: totalTopics },
                     { label: 'Completed', value: completedCount },
                     { label: 'Remaining', value: remainingCount },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      className="flex items-center justify-between text-sm"
-                    >
-                      <span className="text-[#8A94A6]">{item.label}</span>
-                      <span className="font-semibold text-[#E7EAF0] tabular-nums">
-                        {item.value}
+                    { label: 'Avg. Mastery', value: `${quickStats.avgMastery}%` },
+                  ].map((row) => (
+                    <div key={row.label} className="flex justify-between text-sm">
+                      <span className="text-[#8A94A6]">{row.label}</span>
+                      <span className="font-medium text-[#E7EAF0] tabular-nums">
+                        {row.value}
                       </span>
                     </div>
                   ))}
-                </div>
-              </Card>
-
-              {/* ── Legend ────────────────────────────────────────── */}
-              <Card padding="sm" className="bg-[#12161D] border-[#1E2430]">
-                <h3 className="text-sm font-display font-semibold text-[#E7EAF0] mb-3">
-                  Legend
-                </h3>
-                <div className="space-y-2.5">
-                  {[
-                    {
-                      label: 'Completed',
-                      dot: 'bg-secondary border-secondary',
-                    },
-                    { label: 'Current', dot: 'bg-primary border-primary' },
-                    {
-                      label: 'Available',
-                      dot: 'bg-[#5C6575] border-[#5C6575]',
-                    },
-                    {
-                      label: 'Locked',
-                      dot: 'bg-transparent border-[#1E2430]',
-                    },
-                  ].map((entry) => (
-                    <div
-                      key={entry.label}
-                      className="flex items-center gap-2.5"
-                    >
-                      <span
-                        className={cn(
-                          'w-3 h-3 rounded-full border',
-                          entry.dot
-                        )}
-                        aria-hidden="true"
-                      />
-                      <span className="text-sm text-[#8A94A6]">
-                        {entry.label}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
-              {/* ── Learning mode selector (visual placeholder) ──── */}
-              <Card padding="sm" className="bg-[#12161D] border-[#1E2430]">
-                <h3 className="text-sm font-display font-semibold text-[#E7EAF0] mb-3">
-                  Learning Mode
-                </h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {modes.map((mode) => (
-                    <button
-                      key={mode}
-                      onClick={() => setSelectedMode(mode)}
-                      className={cn(
-                        'px-2.5 py-1 text-xs font-medium rounded-full border transition-all duration-200',
-                        selectedMode === mode
-                          ? getModeIntensity(mode)
-                          : 'bg-[#181D27] border-[#1E2430] text-[#5C6575] hover:text-[#8A94A6] hover:border-[#8A94A6]/30'
-                      )}
-                      aria-pressed={selectedMode === mode}
-                      aria-label={`Switch to ${mode} mode`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </Card>
-
-              {/* ── Quick stats ──────────────────────────────────── */}
-              <Card padding="sm" className="bg-[#12161D] border-[#1E2430]">
-                <h3 className="text-sm font-display font-semibold text-[#E7EAF0] mb-3">
-                  Quick Stats
-                </h3>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#8A94A6]">Average mastery</span>
-                    <span className="font-semibold text-[#E7EAF0] tabular-nums">
-                      {quickStats.avgMastery}%
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#8A94A6]">Topics mastered</span>
-                    <span className="font-semibold text-[#E7EAF0] tabular-nums">
-                      {quickStats.masteredCount}
-                    </span>
-                  </div>
                 </div>
               </Card>
             </div>
@@ -447,5 +420,3 @@ export function RoadmapPage() {
     </div>
   )
 }
-
-export default RoadmapPage

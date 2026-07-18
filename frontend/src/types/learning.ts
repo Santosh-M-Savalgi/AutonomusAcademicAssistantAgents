@@ -110,6 +110,12 @@ export interface TeachingCard {
   card_type: string
 }
 
+export interface YouTubeSuggestion {
+  title: string
+  url: string
+  video_id: string
+}
+
 export interface Lesson {
   topic_id: string
   topic_name: string
@@ -117,6 +123,7 @@ export interface Lesson {
   cards: TeachingCard[]
   estimated_minutes: number
   learning_mode: string
+  youtube_suggestions: YouTubeSuggestion[] | null
 }
 
 export interface LessonRequest {
@@ -181,6 +188,13 @@ export interface EvaluateRequest {
   answers: AnswerSubmission[]
 }
 
+export interface NextLessonInfo {
+  topic_id: string
+  topic_name: string
+  topic_description: string
+  topic_difficulty: string
+}
+
 export interface EvaluateResult {
   score: number
   total_questions: number
@@ -192,6 +206,7 @@ export interface EvaluateResult {
   routing_decision: string
   routing_reason: string
   next_topic_id: string | null
+  next_lesson: NextLessonInfo | null
 }
 
 // ─── Adaptive Types ───────────────────────────────────────────

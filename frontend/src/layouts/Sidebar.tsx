@@ -33,8 +33,10 @@ export function Sidebar() {
   return (
     <motion.aside
       layout
+      role="navigation"
+      aria-label={collapsed ? 'Sidebar (collapsed)' : 'Sidebar'}
       className={cn(
-        'h-screen bg-surface border-r border-surface-border flex flex-col py-4 transition-all duration-300',
+        'h-screen bg-surface border-r border-surface-border flex flex-col py-4 transition-all duration-300 overflow-hidden',
         collapsed ? 'w-16' : 'w-60'
       )}
     >
@@ -67,6 +69,7 @@ export function Sidebar() {
               to={item.to}
               className={cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all duration-200 group relative',
+                'focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
                 collapsed && 'justify-center px-2',
                 isActive
                   ? 'text-primary bg-primary-muted'

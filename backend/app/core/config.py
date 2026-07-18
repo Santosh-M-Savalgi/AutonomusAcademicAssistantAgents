@@ -1,6 +1,7 @@
-"""Application configuration for AAA v2 Sprint 10.
+"""Application configuration for AAA v2.
 
-Sprint 10: Adds configuration validation, OTLP settings, and Prometheus auth settings.
+Supports environment-driven settings with startup validation, Pydantic field validators,
+and a runtime configuration status check.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.llm.provider_router import validate_provider_startup
 
 
 class Settings(BaseSettings):
@@ -44,7 +46,7 @@ class Settings(BaseSettings):
     object_storage_health_path: str = "/minio/health/ready"
 
     dependency_check_timeout_seconds: float = 2.0
-    enable_rate_limit: bool = False
+    enable_rate_limit: bool = True
 
     # --- Authentication (Sprint 6) ---
     jwt_secret_key: str = ""
@@ -58,6 +60,11 @@ class Settings(BaseSettings):
     service_name_redis: str = "redis"
     service_name_chroma: str = "chroma"
     service_name_object_storage: str = "object_storage"
+
+    # --- LLM Provider ---
+    llm_provider: str = Field("mock", alias="LLM_PROVIDER")
+    deepseek_api_key: str = ""
+    tavily_api_key: str = ""
 
     # --- Sprint 10: OTLP / Tracing ---
     otel_exporter_otlp_endpoint: str = ""
@@ -159,6 +166,11 @@ def validate_configuration() -> dict[str, Any]:
         "chroma_host": settings.chroma_host,
         "chroma_port": settings.chroma_port,
     }
+
+    # ── Provider startup validation ─────────────────────────────────────
+    provider_errors = validate_provider_startup()
+    for i, err in enumerate(provider_errors):
+        errors[f"llm_provider_{i}"] = err
 
     for name, value in checks.items():
         if value is None or value == "" or value == "missing":

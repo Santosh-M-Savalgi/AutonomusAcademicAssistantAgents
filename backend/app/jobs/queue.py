@@ -60,7 +60,7 @@ class JobQueue:
             The enqueued job (with updated status).
         """
         job.status = JobStatus.QUEUED
-        job.created_at = datetime.utcnow()
+        job.created_at = datetime.now(timezone.utc)
 
         # Store full job metadata as a hash
         meta_key = f"{QUEUE_JOB_META}{job.job_id}"
@@ -132,7 +132,7 @@ class JobQueue:
         Returns:
             A Job if a retry-ready one is found, None otherwise.
         """
-        now = datetime.utcnow().timestamp()
+        now = datetime.now(timezone.utc).timestamp()
         result = await self._redis.eval(
             """
             -- Find jobs with retry_at <= now
@@ -171,9 +171,9 @@ class JobQueue:
             return None
 
         job.status = JobStatus.RUNNING
-        job.started_at = datetime.utcnow()
+        job.started_at = datetime.now(timezone.utc)
         job.worker_id = worker_id
-        job.heartbeat_at = datetime.utcnow()
+        job.heartbeat_at = datetime.now(timezone.utc)
 
         pipe = self._redis.pipeline()
         meta_key = f"{QUEUE_JOB_META}{job_id}"
@@ -198,7 +198,7 @@ class JobQueue:
             return None
 
         job.status = JobStatus.COMPLETED
-        job.completed_at = datetime.utcnow()
+        job.completed_at = datetime.now(timezone.utc)
         job.result = result
         job.progress = JobProgress(percentage=100.0, current_stage="completed", message="Job completed successfully.")
 
@@ -246,9 +246,9 @@ class JobQueue:
         if should_retry and job.retry_count <= job.max_retries:
             # Schedule retry with exponential backoff
             delay = self._retry_policy.delay_for_attempt(job.retry_count - 1)
-            retry_at = datetime.utcnow().timestamp() + delay
+            retry_at = datetime.now(timezone.utc).timestamp() + delay
             job.status = JobStatus.RETRYING
-            job.backoff_until = datetime.utcfromtimestamp(retry_at)
+            job.backoff_until = datetime.fromtimestamp(retry_at, tz=timezone.utc)
 
             pipe = self._redis.pipeline()
             meta_key = f"{QUEUE_JOB_META}{job_id}"
@@ -269,7 +269,7 @@ class JobQueue:
         else:
             # Permanent failure — move to dead-letter
             job.status = JobStatus.FAILED
-            job.completed_at = datetime.utcnow()
+            job.completed_at = datetime.now(timezone.utc)
 
             pipe = self._redis.pipeline()
             meta_key = f"{QUEUE_JOB_META}{job_id}"
@@ -306,7 +306,7 @@ class JobQueue:
             return job
 
         job.status = JobStatus.CANCELLED
-        job.completed_at = datetime.utcnow()
+        job.completed_at = datetime.now(timezone.utc)
 
         pipe = self._redis.pipeline()
         meta_key = f"{QUEUE_JOB_META}{job_id}"
@@ -340,7 +340,7 @@ class JobQueue:
             return None
 
         job.progress = progress
-        job.heartbeat_at = datetime.utcnow()
+        job.heartbeat_at = datetime.now(timezone.utc)
 
         meta_key = f"{QUEUE_JOB_META}{job_id}"
         await self._redis.hset(meta_key, "progress", json.dumps({
@@ -361,7 +361,7 @@ class JobQueue:
         Returns:
             True if the heartbeat was updated.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         meta_key = f"{QUEUE_JOB_META}{job_id}"
         result = await self._redis.hset(meta_key, "heartbeat_at", now.isoformat())
         return result is not None

@@ -5,6 +5,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/ui'
 import { MiniRoadmap } from '@/components/LearningRoadmap'
 import { useDashboard, useLearningPath, useRecommendations, useTopicProgress } from '@/services/learningApi'
 import { useNavigate } from 'react-router-dom'
+import { ROUTES } from '@/constants'
 import { BookOpen, Zap, TrendingUp, Clock, ArrowRight, Sparkles, Target, ChevronRight, Brain } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useAuth } from '@/contexts/AuthContext'
@@ -502,7 +503,7 @@ export function DashboardPage() {
                     icon={<Sparkles className="h-4 w-4" />}
                     onClick={() => {
                       if (currentTopicId) navigate(`/lesson/${currentTopicId}`)
-                      else navigate('/roadmap')
+                      else navigate(ROUTES.GOAL)
                     }}
                     aria-label="Go to your current lesson"
                   >

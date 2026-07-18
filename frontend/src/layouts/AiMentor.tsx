@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/utils/cn'
@@ -16,7 +16,8 @@ import {
   Zap,
   AlertTriangle,
 } from 'lucide-react'
-import { useDashboard, useTopicProgress, useLearningStreak, useRecommendations } from '@/services/learningApi'
+import { apiClient } from '@/api/client'
+import { useDashboard, useTopicProgress, useLearningStreak, useRecommendations, useAdaptiveStatus } from '@/services/learningApi'
 
 type MentorState = 'idle' | 'expanded' | 'collapsed' | 'loading'
 
@@ -230,15 +231,54 @@ export function AiMentor() {
     setMentorState((prev) => (prev === 'collapsed' ? 'expanded' : 'collapsed'))
   }
 
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  interface ChatMessage {
+    role: 'user' | 'assistant'
+    content: string
+  }
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const { data: dashboardData } = useDashboard()
+  const { data: adaptiveStatus } = useAdaptiveStatus()
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
+
   const isOpen = mentorState === 'expanded' || mentorState === 'loading'
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputValue.trim()) return
+    const userMessage = inputValue.trim()
     setInputValue('')
+    setMessages((prev) => [...prev, { role: 'user', content: userMessage }])
     setMentorState('loading')
-    setTimeout(() => {
+
+    try {
+      // Build context from dashboard data
+      const contextPayload: Record<string, unknown> = {
+        query: userMessage,
+        current_course: dashboardData?.current_course,
+        current_topic: dashboardData?.current_topic,
+        overall_mastery: dashboardData?.overall_mastery,
+        average_quiz_score: dashboardData?.average_quiz_score,
+        current_streak_days: dashboardData?.current_streak_days,
+        current_topic_id: adaptiveStatus?.current_topic_id,
+        current_state: adaptiveStatus?.current_state,
+      }
+
+      const { data } = await apiClient.get('/api/v2/adaptive/plan', { params: contextPayload })
+      const responseText = typeof data === 'string' ? data : data?.message || JSON.stringify(data)
+      setMessages((prev) => [...prev, { role: 'assistant', content: responseText }])
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: "I'm here to help! Could you try asking again or rephrasing your question?" },
+      ])
+    } finally {
       setMentorState('expanded')
-    }, 1500)
+      setTimeout(scrollToBottom, 100)
+    }
   }
 
   return (

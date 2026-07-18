@@ -118,15 +118,20 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     - Automatic slow request logging (> threshold)
     """
 
+    # Exempt health-check paths from verbose request logging to reduce noise
+    _HEALTHCHECK_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+
     async def dispatch(self, request: Request, call_next: Callable):
         request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
         session_id = request.headers.get("x-session-id") or request.query_params.get("session_id")
+
+        path = request.url.path
 
         # Merge context from request headers and contextvars
         log_context: dict[str, str] = {
             "request_id": request_id,
             "method": request.method,
-            "path": request.url.path,
+            "path": path,
         }
         if session_id:
             log_context["session_id"] = session_id
@@ -135,7 +140,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         settings = get_settings()
 
         start = time.perf_counter()
-        logger.info("request_started")
+
+        # Skip verbose logging for health/readiness endpoints
+        is_healthcheck = path in self._HEALTHCHECK_PATHS
+        if not is_healthcheck:
+            logger.info("request_started")
 
         try:
             response = await call_next(request)
@@ -145,17 +154,21 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             raise
         else:
             elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-            log_data: dict[str, Any] = {
-                "status_code": response.status_code,
-                "duration_ms": elapsed_ms,
-            }
-
-            # Log slow requests automatically
-            if elapsed_ms > settings.slow_request_threshold_ms:
-                log_data["slow"] = True
-                logger.warning("slow_request", **log_data)
+            if is_healthcheck:
+                # Only log health-check responses at DEBUG level
+                logger.debug("healthcheck", status_code=response.status_code, duration_ms=elapsed_ms)
             else:
-                logger.info("request_finished", **log_data)
+                log_data: dict[str, Any] = {
+                    "status_code": response.status_code,
+                    "duration_ms": elapsed_ms,
+                }
+
+                # Log slow requests automatically
+                if elapsed_ms > settings.slow_request_threshold_ms:
+                    log_data["slow"] = True
+                    logger.warning("slow_request", **log_data)
+                else:
+                    logger.info("request_finished", **log_data)
 
             response.headers["x-request-id"] = request_id
             if session_id:

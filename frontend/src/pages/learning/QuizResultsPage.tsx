@@ -165,6 +165,25 @@ export function QuizResultsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // ── Auto-advance: navigate to next lesson when NEXT_TOPIC ─────────
+  useEffect(() => {
+    if (!evaluateMutation.isSuccess || !evaluateMutation.data) return
+    const result = evaluateMutation.data
+    if (result.routing_decision === 'NEXT_TOPIC' && result.next_lesson) {
+      const nl = result.next_lesson
+      // Navigate to lesson with the next topic's data
+      navigate(`/lesson/${nl.topic_id}`, {
+        state: {
+          topicId: nl.topic_id,
+          topicName: nl.topic_name,
+          topicDescription: nl.topic_description,
+          topicDifficulty: nl.topic_difficulty,
+        },
+        replace: true,
+      })
+    }
+  }, [evaluateMutation.isSuccess, evaluateMutation.data, navigate])
+
   // ── Derived data ──────────────────────────────────────────────
 
   const evaluation: EvaluateResult | undefined = evaluateMutation.data
@@ -178,6 +197,7 @@ export function QuizResultsPage() {
   const routingDecision = evaluation?.routing_decision
   const routingReason = evaluation?.routing_reason
   const nextTopicId = evaluation?.next_topic_id
+  const nextLesson = evaluation?.next_lesson
 
   const scoreColor = getScoreColor(score)
   const ringColor = getScoreRingColor(score)

@@ -296,12 +296,20 @@ def build_graph_from_models(
 ) -> KnowledgeGraph:
     """Build a KnowledgeGraph from Sprint 1 SQLAlchemy model instances.
 
+    Edges that reference topics not present in ``topics`` are skipped
+    with a warning. This handles the case where a reused global topic
+    carries edges to prerequisites from a different syllabus that are
+    not part of the current learning goal.
+
     Args:
         topics: Iterable of ``app.db.models.Topic`` instances.
         edges: Iterable of ``app.db.models.TopicEdge`` instances.
 
     Returns:
-        A fully constructed ``KnowledgeGraph``.
+        A fully constructed ``KnowledgeGraph`` with only valid edges.
+
+    Raises:
+        ValueError: If any edge endpoint is not a ``uuid.UUID``.
     """
     kg = KnowledgeGraph()
     for t in topics:
@@ -310,23 +318,51 @@ def build_graph_from_models(
                 id=t.id,
                 name=t.name,
                 slug=t.slug,
-                difficulty=t.difficulty.value
-                if hasattr(t.difficulty, "value")
-                else str(t.difficulty),
+                difficulty=str(t.difficulty),
                 learning_depth=t.learning_depth,
                 mastery_threshold=t.mastery_threshold,
             )
         )
+
+    topic_ids = set(kg.nodes.keys())
+    skipped = 0
+
     for e in edges:
+        parent_id = e.parent_topic_id
+        child_id = e.child_topic_id
+
+        # Validate UUID types
+        if not isinstance(parent_id, uuid.UUID):
+            raise ValueError(
+                f"Edge {e.id}: parent_topic_id is {type(parent_id).__name__}, expected uuid.UUID"
+            )
+        if not isinstance(child_id, uuid.UUID):
+            raise ValueError(
+                f"Edge {e.id}: child_topic_id is {type(child_id).__name__}, expected uuid.UUID"
+            )
+
+        # Skip edges that reference topics outside the current syllabus
+        if parent_id not in topic_ids or child_id not in topic_ids:
+            skipped += 1
+            continue
+
         kg.add_edge(
             TopicEdgeData(
                 id=e.id,
-                parent_id=e.parent_topic_id,
-                child_id=e.child_topic_id,
-                relationship_type=e.relationship_type.value
-                if hasattr(e.relationship_type, "value")
-                else str(e.relationship_type),
+                parent_id=parent_id,
+                child_id=child_id,
+                relationship_type=str(e.relationship_type),
                 weight=e.weight,
             )
         )
+
+    if skipped > 0:
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.warning(
+            "Skipped %d edge(s) referencing topics outside the current syllabus "
+            "(%d topics, %d edges loaded)",
+            skipped, len(topic_ids), len(edges),
+        )
+
     return kg

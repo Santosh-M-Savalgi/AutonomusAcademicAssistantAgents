@@ -1,2 +1,0 @@
-"""Adaptive router placeholder."""
-

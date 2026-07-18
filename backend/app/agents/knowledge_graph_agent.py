@@ -1,2 +1,0 @@
-"""Knowledge graph agent placeholder."""
-

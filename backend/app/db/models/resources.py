@@ -10,11 +10,11 @@ from sqlalchemy import DateTime as SATime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import Base
+from app.db.models.base import Base, IdMixin
 from app.db.models.enums import DifficultyLevel, ResourceType
 
 
-class TrustedChannel(Base):
+class TrustedChannel(Base, IdMixin):
     """Curated allow-list of trusted YouTube channels (Section 8)."""
 
     __tablename__ = "trusted_channels"
@@ -26,7 +26,7 @@ class TrustedChannel(Base):
         return f"<TrustedChannel {self.channel_name!r} tier={self.authority_tier}>"
 
 
-class Resource(Base):
+class Resource(Base, IdMixin):
     """Web/docs/blog/research resource recommended for a topic."""
 
     __tablename__ = "resources"
@@ -54,7 +54,7 @@ class Resource(Base):
         return f"<Resource {self.title!r}>"
 
 
-class YouTubeResource(Base):
+class YouTubeResource(Base, IdMixin):
     """YouTube video resource, channel-must-be-trusted filtered."""
 
     __tablename__ = "youtube_resources"

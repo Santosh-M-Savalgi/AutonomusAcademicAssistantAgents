@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models.base import Base
+from app.db.models.base import Base, IdMixin
 from app.db.models.enums import (
     BloomLevel,
     DifficultyLevel,
@@ -28,7 +28,7 @@ from app.db.models.enums import (
 )
 
 
-class Syllabus(Base):
+class Syllabus(Base, IdMixin):
     __tablename__ = "syllabi"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -49,7 +49,7 @@ class Syllabus(Base):
         return f"<Syllabus {self.title!r}>"
 
 
-class Topic(Base):
+class Topic(Base, IdMixin):
     __tablename__ = "topics"
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -105,7 +105,7 @@ class Topic(Base):
         return f"<Topic {self.slug!r}>"
 
 
-class TopicEdge(Base):
+class TopicEdge(Base, IdMixin):
     """Direct prerequisite edge: parent depends on child (Section 7.3)."""
 
     __tablename__ = "topic_edges"
@@ -145,7 +145,7 @@ class TopicEdge(Base):
         )
 
 
-class TopicClosure(Base):
+class TopicClosure(Base):  # Composite PK (ancestor_id, descendant_id) — no IdMixin
     """Materialized transitive closure (Section 7.4)."""
 
     __tablename__ = "topic_closure"

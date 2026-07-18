@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 import chromadb
 from chromadb import Collection
+from chromadb.errors import NotFoundError
 
 from app.db.chroma_client import get_chroma_client
 
@@ -78,7 +79,7 @@ class VectorStoreService:
         """Get an existing collection or create a new one."""
         try:
             return self._client.get_collection(name)
-        except ValueError:
+        except (ValueError, NotFoundError):
             return self._client.create_collection(
                 name=name,
                 metadata={"hnsw:space": "cosine"},

@@ -1,2 +1,0 @@
-"""Root cause agent placeholder."""
-

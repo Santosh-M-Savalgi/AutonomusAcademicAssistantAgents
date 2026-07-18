@@ -415,26 +415,26 @@ class WorkflowOrchestrator:
         current_uuid = _to_uuid(ctx.topic_id)
 
         # Add current topic
-        kg.nodes[current_uuid] = TopicNode(
+        kg.add_node(TopicNode(
             id=current_uuid,
             name=ctx.topic_name,
             slug=ctx.topic_name.lower().replace(" ", "-"),
             difficulty=ctx.topic_difficulty,
             learning_depth=15,
-        )
+        ))
 
         # Add prerequisite topics
         if ctx.prerequisite_topics:
             for p in ctx.prerequisite_topics:
                 p_id = _to_uuid(p.get("id", ""))
                 if p_id and p_id not in kg.nodes:
-                    kg.nodes[p_id] = TopicNode(
+                    kg.add_node(TopicNode(
                         id=p_id,
                         name=p.get("name", "Prerequisite"),
                         slug=p.get("name", "prerequisite").lower().replace(" ", "-"),
                         difficulty=p.get("difficulty", "beginner"),
                         learning_depth=15,
-                    )
+                    ))
                 if p_id:
                     # Edge: current depends on prereq
                     edge_id = uuid.uuid4()
@@ -445,15 +445,7 @@ class WorkflowOrchestrator:
                         relationship_type="direct_prerequisite",
                         weight=1.0,
                     )
-                    kg.edges.append(edge)
-                    if current_uuid not in kg.outgoing:
-                        kg.outgoing[current_uuid] = []
-                    kg.outgoing[current_uuid].append(edge)
-                    if p_id not in kg.incoming:
-                        kg.incoming[p_id] = []
-                    kg.incoming[p_id].append(edge)
-                    kg._adj.setdefault(current_uuid, []).append(p_id)
-                    kg._radj.setdefault(p_id, []).append(current_uuid)
+                    kg.add_edge(edge)
 
         return kg
 

@@ -1,2 +1,0 @@
-"""Adaptive routing node placeholder."""
-

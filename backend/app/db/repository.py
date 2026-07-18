@@ -45,8 +45,12 @@ async def upsert_session_checkpoint(
     path_stack: dict | None = None,
     current_topic_id: uuid.UUID | None = None,
     status: str | None = None,
-) -> Session:
-    """Create or update a session's checkpoint pointer and metadata.
+) -> Session | None:
+    """Update a session's checkpoint pointer and metadata.
+
+    Only UPDATES existing session rows. Does NOT create new sessions.
+    If the session doesn't exist in Postgres, logs a warning and returns None.
+    Session creation is handled by ``SessionRepository.create()`` / the API layer.
 
     Used by the LangGraph checkpointer to persist durable state
     after every graph-node transition (Section 18.1).
@@ -54,8 +58,15 @@ async def upsert_session_checkpoint(
     now = datetime.now(timezone.utc)
     session = await get_session_by_id(db, session_id)
     if session is None:
-        session = Session(id=session_id, last_active_at=now, created_at=now)
-        db.add(session)
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.warning(
+            "upsert_session_checkpoint: session %s not found in Postgres — "
+            "skipping durable write. Sessions must be created by the API layer "
+            "(SessionManager.create_session → SessionRepository.create).",
+            session_id,
+        )
+        return None
     session.last_active_at = now
     if graph_checkpoint_id is not None:
         session.graph_checkpoint_id = graph_checkpoint_id

@@ -9,4 +9,12 @@ __pycache__
 *.db
 data
 chroma_store
-
+.env
+.env.example
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+tests/
+*.md

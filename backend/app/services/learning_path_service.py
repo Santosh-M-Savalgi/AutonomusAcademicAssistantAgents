@@ -118,10 +118,17 @@ class LearningPathService:
             score = mastery_scores.get(tid, 0.0)
             threshold = node.mastery_threshold
             prereqs = graph.get_prerequisites(tid)
-            unmet = [
-                pid for pid in prereqs
-                if mastery_scores.get(pid, 0.0) < graph.nodes[pid].mastery_threshold
-            ]
+            unmet: list[uuid.UUID] = []
+            for pid in prereqs:
+                if pid not in graph.nodes:
+                    raise ValueError(
+                        f"Graph inconsistency: prerequisite {pid} of topic {tid} "
+                        f"({node.name}) exists in edges but is missing from graph.nodes. "
+                        f"This indicates an edge referencing a topic outside the current "
+                        f"syllabus. Run build_graph_from_models() which filters these."
+                    )
+                if mastery_scores.get(pid, 0.0) < graph.nodes[pid].mastery_threshold:
+                    unmet.append(pid)
             step_map[tid] = LearningPathStep(
                 topic_id=tid,
                 topic_name=node.name,

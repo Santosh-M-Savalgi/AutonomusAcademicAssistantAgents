@@ -64,12 +64,66 @@ async def evaluate_quiz_node(state: AAAState) -> AAAState:
         _log_state("evaluate", "exit(no_answers)", state)
         return state
 
+    # ── Enrich answers with correct_answer from the stored quiz ──────────
+    # The frontend sends only {question_id, selected_answer} because
+    # /quiz/generate deliberately hides correct_answer from the student.
+    # We must look up the correct answers from the quiz checkpoint and
+    # compute is_correct before passing to EvaluationService.
+    quiz_questions = state.get("quiz", {}).get("questions", [])
+    logger.info(
+        "EVAL-DIAG: answers_count=%d quiz_questions_count=%d state_keys=%s quiz_keys=%s",
+        len(answers),
+        len(quiz_questions),
+        sorted(state.keys()),
+        sorted(state.get("quiz", {}).keys()) if isinstance(state.get("quiz"), dict) else "NOT_DICT",
+    )
+    if quiz_questions:
+        first_q = quiz_questions[0]
+        logger.info(
+            "EVAL-DIAG: first_quiz_q id=%s correct_answer=%r options=%d",
+            first_q.get("id"), first_q.get("correct_answer"),
+            len(first_q.get("options", [])),
+        )
+    if answers:
+        first_a = answers[0]
+        logger.info(
+            "EVAL-DIAG: first_answer id=%s selected=%r",
+            first_a.get("question_id", first_a.get("questionId")),
+            first_a.get("selected_answer", first_a.get("selectedAnswer")),
+        )
+    correct_map: dict[str, dict[str, str]] = {}
+    for q in quiz_questions:
+        qid = q.get("id", "")
+        if qid:
+            correct_map[qid] = {
+                "correct_answer": q.get("correct_answer", ""),
+                "concept_tag": q.get("concept_tag", "general"),
+                "question": q.get("question", ""),
+            }
+
+    enriched_answers: list[dict] = []
+    for a in answers:
+        qid = a.get("question_id", a.get("questionId", ""))
+        stored = correct_map.get(qid, {})
+        selected = a.get("selected_answer", a.get("selectedAnswer", ""))
+        correct = stored.get("correct_answer", "")
+        is_correct = selected.strip().lower() == correct.strip().lower()
+        enriched_answers.append({
+            "question_id": qid,
+            "question": stored.get("question", a.get("question", "")),
+            "selected_answer": selected,
+            "correct_answer": correct,
+            "is_correct": is_correct,
+            "concept_tag": stored.get("concept_tag", "general"),
+            "time_taken_seconds": a.get("time_taken_seconds", 30),
+        })
+
     # ── Normal path: evaluate answers ────────────────────────────────────
     try:
         evaluator = EvaluationService()
         evaluation = await evaluator.evaluate(
             topic_name=topic_name,
-            questions=answers,
+            questions=enriched_answers,
         )
 
         state["evaluation"] = {

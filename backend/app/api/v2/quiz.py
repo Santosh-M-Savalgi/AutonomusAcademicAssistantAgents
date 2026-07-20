@@ -10,11 +10,18 @@ so the same session_id must be used across both calls.
 
 from __future__ import annotations
 
+import logging
+import re
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_student
 from app.db.models import User
+from app.db.postgres import get_db
+from app.db.repository import get_topic_by_id
 from app.graph import get_graph, initial_state
 from app.llm.quiz_service import QuizService
 
@@ -101,16 +108,22 @@ class EvaluateResponse(BaseModel):
 
 
 @router.post("/generate", response_model=QuizResponse)
-async def generate_quiz(request: QuizGenerateRequest) -> QuizResponse:
+async def generate_quiz(
+    request: QuizGenerateRequest,
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_db),
+) -> QuizResponse:
     """Generate a multiple-choice quiz for the given topic.
 
     Calls QuizService directly — does not go through the graph.
     Use the same session_id in /quiz/evaluate to resume from
     the graph checkpoint created by /lessons/lesson.
     """
+    topic_name = await _resolve_topic_name(db, request.topic_id, request.topic_name)
+
     quiz_service = QuizService()
     quiz = await quiz_service.generate_quiz(
-        topic_name=request.topic_name,
+        topic_name=topic_name,
         topic_description=request.topic_description,
         topic_difficulty=request.topic_difficulty,
         mastery_score=request.mastery_score,
@@ -168,6 +181,12 @@ async def evaluate_quiz(
     state["attempts_on_current"] = request.attempts_on_current
     state["mastery_scores"] = {request.topic_id: request.mastery_score}
 
+    # initial_state() sets quiz/lesson/evaluation to None.  We must
+    # remove those keys so they don't overwrite the checkpoint values
+    # when LangGraph merges this state onto the existing thread.
+    for _key in ("quiz", "lesson", "evaluation", "retrieval_context", "retrieval_web"):
+        state.pop(_key, None)
+
     # Invoke the graph — resumes from checkpoint
     graph = get_graph()
     config = {"configurable": {"thread_id": request.session_id or request.topic_id}}
@@ -199,10 +218,11 @@ async def evaluate_quiz(
                 )
                 break
         if next_lesson is None:
-            # Fallback: just the ID
+            # Fallback: resolve topic name from DB
+            fallback_name = await _resolve_topic_name(db, next_topic, next_topic)
             next_lesson = NextTopicInfo(
                 topic_id=next_topic,
-                topic_name=next_topic,
+                topic_name=fallback_name,
                 topic_description="",
                 topic_difficulty="beginner",
             )
@@ -220,3 +240,23 @@ async def evaluate_quiz(
         next_topic_id=next_topic,
         next_lesson=next_lesson,
     )
+
+
+async def _resolve_topic_name(db: AsyncSession, topic_id: str, fallback: str) -> str:
+    """Resolve a topic name from the database if the provided name is empty or looks like a UUID."""
+    if not topic_id:
+        return fallback
+    try:
+        tid = uuid.UUID(topic_id)
+        needs_resolve = (
+            not fallback
+            or fallback == topic_id
+            or re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', fallback, re.IGNORECASE)
+        )
+        if needs_resolve:
+            topic_row = await get_topic_by_id(db, tid)
+            if topic_row is not None:
+                return topic_row.name
+    except (ValueError, AttributeError):
+        pass
+    return fallback

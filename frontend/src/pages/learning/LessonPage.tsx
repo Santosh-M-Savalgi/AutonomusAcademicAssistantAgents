@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Card, Button, Badge, Skeleton, Progress } from '@/components/ui'
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui'
-import { useGenerateLesson } from '@/services/learningApi'
+import { useLesson } from '@/services/learningApi'
 import {
   BookOpen,
   ArrowLeft,
@@ -510,7 +510,6 @@ export function LessonPage() {
   const { topicId } = useParams<{ topicId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const generateLesson = useGenerateLesson()
 
   // Read topic data from navigation state (populated by auto-advance)
   const navState = location.state as {
@@ -524,24 +523,24 @@ export function LessonPage() {
   const [viewedCards, setViewedCards] = useState<number>(0)
   const [hasScrolledPast, setHasScrolledPast] = useState<Set<number>>(new Set())
 
-  const lesson = generateLesson.data ?? null
-  const isLoading = generateLesson.isPending
-  const isError = generateLesson.isError
-  const error = generateLesson.error
+  // ── Lesson generation (query-based — survives StrictMode remounts) ──
 
-  // Trigger lesson generation on mount
-  useEffect(() => {
-    if (topicId) {
-      generateLesson.mutate({
-        topic_id: topicId,
-        topic_name: navState?.topicName ?? topicId,
-        topic_description: navState?.topicDescription ?? '',
-        topic_difficulty: navState?.topicDifficulty ?? 'beginner',
-        session_id: navState?.sessionId ?? '',
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topicId])
+  const lessonQuery = useLesson(
+    topicId,
+    {
+      topic_id: topicId ?? '',
+      topic_name: navState?.topicName ?? topicId,
+      topic_description: navState?.topicDescription ?? '',
+      topic_difficulty: navState?.topicDifficulty ?? 'beginner',
+      session_id: navState?.sessionId ?? '',
+    },
+    { enabled: !!topicId },
+  )
+
+  const lesson = lessonQuery.data ?? null
+  const isLoading = lessonQuery.isLoading
+  const isError = lessonQuery.isError
+  const error = lessonQuery.error
 
   // Track which cards the user has scrolled past (counts as "viewed")
   useEffect(() => {
@@ -589,17 +588,22 @@ export function LessonPage() {
   }
 
   const handleComplete = () => {
-    // Mark lesson as complete; navigate back to roadmap
-    navigate('/roadmap')
+    // Navigate to quiz — pass the pre-generated quiz from the lesson response
+    // so QuizPage can display it instantly without calling /quiz/generate.
+    // The quiz came from the same graph run, so /quiz/evaluate can score
+    // against the same questions stored in the checkpoint.
+    navigate(`/quiz/${topicId}`, {
+      state: {
+        topicId,
+        topicName: lesson?.topic_name ?? navState?.topicName ?? topicId,
+        sessionId: navState?.sessionId ?? '',
+        questions: lesson?.generated_quiz ?? null,
+      },
+    })
   }
 
   const handleRetry = () => {
-    if (topicId) {
-      generateLesson.mutate({
-        topic_id: topicId,
-        topic_name: topicId,
-      })
-    }
+    lessonQuery.refetch()
   }
 
   // ── Loading state ──────────────────────────────────────────

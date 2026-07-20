@@ -652,6 +652,25 @@ async def get_learning_roadmap(
     )
     session = session_result.scalar_one_or_none()
 
+    # ── Create a session if none exists ──────────────────────────────────
+    # Ensures session_id is always populated for checkpointing, even when
+    # the user navigates directly to the roadmap without creating a goal.
+    if session is None:
+        manager = SessionManager()
+        try:
+            session_data: SessionData = await manager.create_session(
+                student_id=str(current_user.id),
+                syllabus_id=str(syllabus.id),
+            )
+            session = SessionModel(
+                id=uuid.UUID(session_data.session_id),
+                user_id=current_user.id,
+                status="active",
+            )
+            db.add(session)
+        except Exception:
+            _log.warning("Failed to create session for roadmap — proceeding without")
+
     # ── Build knowledge graph and learning path ───────────────────────────
     kg = build_graph_from_models(db_topics, db_edges)
     path_service = LearningPathService()

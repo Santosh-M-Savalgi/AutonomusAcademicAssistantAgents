@@ -130,12 +130,15 @@ export function useLearningPath(
 
 // ─── Lesson Hooks ─────────────────────────────────────────────
 
-export function useGenerateLesson() {
+export function useGenerateLesson(mutationKey?: string[]) {
   return useMutation({
+    mutationKey,
     mutationFn: async (request: LessonRequest) => {
       const { data } = await apiClient.post<Lesson>('/api/v2/lessons/lesson', request)
       return data
     },
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   })
 }
 
@@ -147,6 +150,84 @@ export function useGenerateQuiz() {
       const { data } = await apiClient.post<Quiz>('/api/v2/quiz/generate', request)
       return data
     },
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+  })
+}
+
+// ─── Lesson Query (query-based, survives StrictMode remounts) ────
+
+/** Raw API call for lesson generation. */
+export async function fetchLesson(request: LessonRequest): Promise<Lesson> {
+  const { data } = await apiClient.post<Lesson>('/api/v2/lessons/lesson', request)
+  return data
+}
+
+/** Query-key factory for lessons. */
+export const lessonKeys = {
+  detail: (topicId: string) => ['lesson', topicId] as const,
+}
+
+/**
+ * Query hook that returns a lesson for a topic.
+ *
+ * Uses React Query's query cache, which survives StrictMode remounts
+ * (unlike mutation state which resets when the last observer unsubscribes).
+ * Retries are capped at 2 attempts with exponential backoff.
+ */
+export function useLesson(
+  topicId: string | undefined,
+  request: LessonRequest,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery<Lesson>({
+    queryKey: lessonKeys.detail(topicId ?? '__none__'),
+    queryFn: ({ signal }) => fetchLesson(request),
+    enabled: opts?.enabled ?? !!topicId,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  })
+}
+
+// ─── Quiz Pre-generation (query-based, shared cache) ────────────
+
+/** Raw API call for quiz generation — used by both prefetch and the query hook. */
+export async function fetchQuiz(request: QuizGenerateRequest): Promise<Quiz> {
+  const { data } = await apiClient.post<Quiz>('/api/v2/quiz/generate', request)
+  return data
+}
+
+/** Query-key factory for pre-generated quizzes. */
+export const quizKeys = {
+  detail: (topicId: string) => ['quiz', topicId] as const,
+}
+
+/**
+ * Query hook that returns a quiz — either pre-fetched by LessonPage
+ * (instant from cache) or generated on demand.
+ *
+ * Retries are capped at 2 attempts with exponential backoff (1 s, 2 s).
+ * Cached data stays fresh for 10 minutes and is garbage-collected after 30.
+ */
+export function useQuiz(
+  topicId: string | undefined,
+  request: QuizGenerateRequest,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery<Quiz>({
+    queryKey: quizKeys.detail(topicId ?? '__none__'),
+    queryFn: ({ signal }) => fetchQuiz(request),
+    enabled: opts?.enabled ?? !!topicId,
+    staleTime: 10 * 60 * 1000,       // 10 min — quiz is valid for a session
+    gcTime: 30 * 60 * 1000,          // 30 min cache lifetime
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   })
 }
 

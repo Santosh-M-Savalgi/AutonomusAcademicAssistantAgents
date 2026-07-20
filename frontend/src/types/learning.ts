@@ -124,6 +124,7 @@ export interface Lesson {
   estimated_minutes: number
   learning_mode: string
   youtube_suggestions: YouTubeSuggestion[] | null
+  generated_quiz: QuizQuestion[] | null
 }
 
 export interface LessonRequest {

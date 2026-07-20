@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Lightbulb,
   BrainCircuit,
+  BarChart3,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AnswerSubmission, EvaluateResult } from '@/types/learning'
@@ -132,6 +133,10 @@ function StatCardItem({ label, value, icon, variant = 'default', delay = 0 }: St
   )
 }
 
+// ─── Module-level guard against StrictMode double-fire ─────────
+
+const evaluateInFlight = new Set<string>()
+
 // ─── Quiz Results Page ───────────────────────────────────────────
 
 export function QuizResultsPage() {
@@ -142,23 +147,36 @@ export function QuizResultsPage() {
   const locationState = location.state as
     | {
         answers: AnswerSubmission[]
+        questions?: import('@/types/learning').QuizQuestion[]
         topicName?: string
+        sessionId?: string
         totalQuestions?: number
       }
     | undefined
 
   const answers = locationState?.answers
+  const questions = locationState?.questions
   const topicName = locationState?.topicName ?? 'Topic'
+  const sessionId = locationState?.sessionId ?? ''
 
   const evaluateMutation = useEvaluateQuiz()
 
-  // Submit for evaluation on mount
+  // Submit for evaluation on mount — guarded against StrictMode double-fire.
+  // Module-level Set survives remounts (unlike useMutation.isPending which
+  // starts as false on every new mutation instance in StrictMode).
   useEffect(() => {
-    if (answers && topicId) {
+    const dedupKey = `${topicId}:${sessionId}`
+    if (answers && topicId && !evaluateInFlight.has(dedupKey)) {
+      evaluateInFlight.add(dedupKey)
       evaluateMutation.mutate({
         topic_id: topicId,
         topic_name: topicName,
+        session_id: sessionId,
         answers,
+      }, {
+        onSettled: () => {
+          evaluateInFlight.delete(dedupKey)
+        },
       })
     }
     // Only run on mount when answers/topicId are available
@@ -394,6 +412,68 @@ export function QuizResultsPage() {
             delay={0.4}
           />
         </div>
+
+        {/* ── 2.5 Question-by-Question Breakdown ─────────────────── */}
+        {questions && questions.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.45 }}
+            className="mb-8"
+          >
+            <SectionHeader
+              title="Your Answers"
+              description="Review each question and your response"
+              className="mb-3"
+            />
+            <div className="space-y-3">
+              {questions.map((q, idx) => {
+                const userAnswer = answers?.find(
+                  (a) => a.questionId === q.id,
+                )
+                return (
+                  <Card key={q.id} padding="md" aria-label={`Question ${idx + 1}`}>
+                    <div className="flex items-start gap-3">
+                      <Badge variant="default" size="sm" className="mt-0.5 shrink-0">
+                        Q{idx + 1}
+                      </Badge>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-text-primary mb-2">
+                          {q.question}
+                        </p>
+                        <div className="space-y-1">
+                          {q.options.map((opt, oi) => {
+                            const isSelected = userAnswer?.selectedAnswer === opt
+                            return (
+                              <div
+                                key={oi}
+                                className={cn(
+                                  'text-xs px-2 py-1 rounded border',
+                                  isSelected
+                                    ? 'border-primary bg-primary-muted text-text-primary font-medium'
+                                    : 'border-surface-border text-text-muted',
+                                )}
+                              >
+                                {opt}
+                              </div>
+                            )
+                          })}
+                        </div>
+                        {userAnswer ? (
+                          <p className="text-xs text-text-secondary mt-2">
+                            Your answer: <span className="font-medium text-text-primary">{userAnswer.selectedAnswer}</span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-text-muted mt-2 italic">Not answered</p>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                )
+              })}
+            </div>
+          </motion.div>
+        )}
 
         {/* ── 3. Feedback Section ───────────────────────────────── */}
         {feedback && (

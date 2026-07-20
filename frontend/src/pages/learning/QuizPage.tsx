@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Card, Button, Badge, Progress, Skeleton } from '@/components/ui'
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui'
-import { useGenerateQuiz } from '@/services/learningApi'
+import { useQuiz } from '@/services/learningApi'
 import {
   BookOpen,
   Clock,
@@ -111,41 +111,51 @@ function QuestionSkeleton() {
 
 export function QuizPage() {
   const { topicId } = useParams<{ topicId: string }>()
+  const location = useLocation()
   const navigate = useNavigate()
 
-  const generateQuiz = useGenerateQuiz()
+  // Read topic data from navigation state (populated by LessonPage)
+  const navState = location.state as {
+    topicId?: string
+    topicName?: string
+    sessionId?: string
+    questions?: import('@/types/learning').QuizQuestion[] | null
+  } | null
 
-  const [quiz, setQuiz] = useState<{ topicName: string; questions: QuizQuestion[] } | null>(null)
   const [answers, setAnswers] = useState<Map<string, string>>(new Map())
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
-  const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // ── Generate quiz on mount ──────────────────────────────────────────────
+  // ── Quiz source: pre-generated from lesson, or fetch on demand ──────
 
-  const fetchQuiz = useCallback(async () => {
-    if (!topicId) return
-    setError(null)
-    try {
-      const result = await generateQuiz.mutateAsync({
-        topic_id: topicId,
-        topic_name: '',
-        num_questions: 10,
-      })
-      setQuiz({
-        topicName: result.topic_name,
-        questions: result.questions,
-      })
-      setAnswers(new Map())
-      setCurrentQuestionIndex(0)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate quiz')
-    }
-  }, [topicId, generateQuiz])
+  const preGenQuestions = navState?.questions ?? null
 
+  const quizQuery = useQuiz(
+    topicId,
+    {
+      topic_id: topicId ?? '',
+      topic_name: navState?.topicName ?? '',
+      session_id: navState?.sessionId ?? '',
+      num_questions: 10,
+    },
+    { enabled: !!topicId && !preGenQuestions },  // skip API call if pre-generated
+  )
+
+  const quiz = preGenQuestions
+    ? { topicName: navState?.topicName ?? '', questions: preGenQuestions }
+    : quizQuery.data
+      ? { topicName: quizQuery.data.topic_name, questions: quizQuery.data.questions }
+      : null
+
+  // Stable key that only changes when the actual question set changes,
+  // not when the wrapper object is recreated on every render.
+  const quizQuestionsKey = quiz?.questions.map((q) => q.id).join(',') ?? ''
+
+  // Reset answers + question index when quiz source changes
   useEffect(() => {
-    fetchQuiz()
-  }, [fetchQuiz])
+    setAnswers(new Map())
+    setCurrentQuestionIndex(0)
+  }, [quizQuestionsKey])
 
   // ── Derived state ────────────────────────────────────────────────────────
 
@@ -215,6 +225,7 @@ export function QuizPage() {
     const submissionData = {
       topicId: topicId!,
       topicName: quiz.topicName,
+      sessionId: navState?.sessionId ?? '',
       questions: quiz.questions,
       answers: Array.from(answers.entries()).map(([questionId, selectedAnswer]) => ({
         questionId,
@@ -227,7 +238,7 @@ export function QuizPage() {
 
   // ── Render: Loading ──────────────────────────────────────────────────────
 
-  if (generateQuiz.isPending) {
+  if (quizQuery.isLoading) {
     return (
       <div className="min-h-screen bg-background" role="status" aria-label="Loading quiz">
         <div className="max-w-6xl mx-auto px-4 py-8">
@@ -240,13 +251,13 @@ export function QuizPage() {
 
   // ── Render: Error ────────────────────────────────────────────────────────
 
-  if (error || generateQuiz.isError) {
+  if (quizQuery.isError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <ErrorState
           title="Failed to load quiz"
-          message={error || generateQuiz.error?.message || 'Unable to generate quiz questions. Please try again.'}
-          onRetry={fetchQuiz}
+          message={quizQuery.error?.message || 'Unable to generate quiz questions. Please try again.'}
+          onRetry={() => quizQuery.refetch()}
         />
       </div>
     )
@@ -262,7 +273,7 @@ export function QuizPage() {
           description="No questions could be generated for this topic. Please try again later."
           icon={<BookOpen className="h-12 w-12" />}
           action={
-            <Button variant="secondary" onClick={fetchQuiz} loading={generateQuiz.isPending}>
+            <Button variant="secondary" onClick={() => quizQuery.refetch()} loading={quizQuery.isLoading}>
               Try Again
             </Button>
           }

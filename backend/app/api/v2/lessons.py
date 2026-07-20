@@ -9,12 +9,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_student
 from app.db.models import User
-import logging
+from app.db.postgres import get_db
+from app.db.repository import get_topic_by_id
 
 from app.graph import get_graph, initial_state
+import logging
+import re
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,17 @@ class YouTubeSuggestion(BaseModel):
     video_id: str
 
 
+class QuizQuestionForStudent(BaseModel):
+    """A quiz question as returned to the student — correct_answer is excluded."""
+    id: str
+    question: str
+    options: list[str]
+    difficulty: str
+    concept_tag: str
+    bloom_level: str
+    estimated_time_seconds: int
+
+
 class LessonResponse(BaseModel):
     topic_id: str
     topic_name: str
@@ -61,6 +77,7 @@ class LessonResponse(BaseModel):
     estimated_minutes: int
     learning_mode: str
     youtube_suggestions: list[YouTubeSuggestion] | None = None
+    generated_quiz: list[QuizQuestionForStudent] | None = None
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
@@ -70,6 +87,7 @@ class LessonResponse(BaseModel):
 async def generate_lesson(
     request: LessonRequest,
     current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_db),
 ) -> LessonResponse:
     """Generate a structured lesson for the given topic via the LangGraph.
 
@@ -80,13 +98,39 @@ async def generate_lesson(
     Frontend contract is preserved identically — same request fields,
     same response shape.
     """
+    # ── Resolve topic_name when the frontend sends a UUID ──────────
+    resolved_name: str = request.topic_name
+    try:
+        tid = uuid.UUID(request.topic_id)
+        # If topic_name is empty, equals topic_id (both UUIDs), or matches
+        # a UUID pattern, look up the real name from the database.
+        if (
+            not resolved_name
+            or resolved_name == request.topic_id
+            or re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', resolved_name, re.IGNORECASE)
+        ):
+            topic_row = await get_topic_by_id(db, tid)
+            if topic_row is not None:
+                resolved_name = topic_row.name
+                logger.info(
+                    "Resolved topic_name from DB: '%s' -> '%s'",
+                    request.topic_name, resolved_name,
+                )
+            else:
+                logger.warning(
+                    "Could not resolve topic_name — no DB row for topic_id=%s",
+                    request.topic_id,
+                )
+    except (ValueError, AttributeError):
+        pass  # topic_id not a valid UUID; keep request.topic_name as-is
+
     # Build graph state from request
     state = initial_state(
         session_id=request.session_id,
         syllabus_id=request.syllabus_id,
         learning_goal=request.learning_goal,
         current_topic_id=request.topic_id,
-        current_topic_name=request.topic_name,
+        current_topic_name=resolved_name,
         current_topic_description=request.topic_description,
         current_topic_difficulty=request.topic_difficulty,
         learning_mode=request.learning_mode,
@@ -159,6 +203,29 @@ async def generate_lesson(
                 for y in yt_results
             ]
 
+    # Extract quiz questions (without correct_answer) from the graph result.
+    # The graph generates the quiz during the same run — we return it so
+    # the frontend can display it instantly without a second API call.
+    # /quiz/evaluate reads the same quiz from the checkpoint, so the
+    # question IDs and correct answers are guaranteed to match.
+    generated_quiz: list[QuizQuestionForStudent] | None = None
+    quiz_data = result.get("quiz")
+    if quiz_data and isinstance(quiz_data, dict):
+        quiz_questions = quiz_data.get("questions", [])
+        if quiz_questions:
+            generated_quiz = [
+                QuizQuestionForStudent(
+                    id=q.get("id", ""),
+                    question=q.get("question", ""),
+                    options=q.get("options", []),
+                    difficulty=q.get("difficulty", "beginner"),
+                    concept_tag=q.get("concept_tag", "general"),
+                    bloom_level=q.get("bloom_level", "remember"),
+                    estimated_time_seconds=q.get("estimated_time_seconds", 30),
+                )
+                for q in quiz_questions
+            ]
+
     return LessonResponse(
         topic_id=lesson.get("topic_id", request.topic_id),
         topic_name=lesson.get("topic_name", request.topic_name),
@@ -174,4 +241,5 @@ async def generate_lesson(
         estimated_minutes=lesson.get("estimated_minutes", 5),
         learning_mode=lesson.get("learning_mode", request.learning_mode),
         youtube_suggestions=youtube_suggestions,
+        generated_quiz=generated_quiz,
     )

@@ -214,6 +214,7 @@ async def record_analytics_event(
             payload=request.payload,
             session_id=session_uuid,
         )
+        await db.commit()
     except Exception as exc:
         logger.error("Failed to record analytics event: %s", exc)
         raise HTTPException(

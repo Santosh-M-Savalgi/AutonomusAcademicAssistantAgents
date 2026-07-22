@@ -51,6 +51,10 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency: yields an AsyncSession, closed after the request.
 
+    This dependency never commits. Every endpoint/service that mutates
+    data must call ``await db.commit()`` itself.  On exception the
+    session is rolled back automatically.
+
     Usage::
 
         @router.get("/example")
@@ -61,7 +65,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with factory() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise

@@ -1,11 +1,7 @@
 """Quiz API endpoints.
 
 POST /api/v2/quiz/generate — generate a quiz for a topic (calls QuizService directly).
-POST /api/v2/quiz/evaluate — evaluate quiz answers via the LangGraph.
-
-/quiz/evaluate invokes the graph internally: evaluate → route.
-The graph resumes from the checkpoint left by /lessons/lesson,
-so the same session_id must be used across both calls.
+POST /api/v2/quiz/evaluate — evaluate quiz answers directly (no graph invocation).
 """
 
 from __future__ import annotations
@@ -13,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -22,8 +19,11 @@ from app.auth.dependencies import get_current_student
 from app.db.models import User
 from app.db.postgres import get_db
 from app.db.repository import get_topic_by_id
-from app.graph import get_graph, initial_state
+from app.graph import get_checkpointer, initial_state
+from app.llm.evaluation_service import EvaluationService
 from app.llm.quiz_service import QuizService
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
@@ -69,10 +69,16 @@ class EvaluateRequest(BaseModel):
     prerequisite_topics: list[dict] | None = Field(None, description="Prerequisite topic data")
     answers: list[dict] = Field(
         ...,
-        description="List of answer dicts with keys: question_id, question, "
-        "selected_answer, correct_answer, is_correct, concept_tag, time_taken_seconds",
+        description="List of answer dicts with keys: question_id, selected_answer",
     )
-    session_id: str = Field("", description="Session UUID for graph checkpoint resumption")
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        description="Session UUID for checkpoint lookup — REQUIRED. "
+        "The checkpoint was saved under this session_id during lesson generation. "
+        "Using topic_id as a fallback loads the wrong checkpoint and silently "
+        "scores every answer as incorrect.",
+    )
     syllabus_id: str = Field("", description="Syllabus UUID from /learning/goal")
     learning_goal: str = Field("", description="Original learning goal")
     topics: list[dict] = Field(default_factory=list, description="Parsed topic list from goal endpoint")
@@ -116,8 +122,6 @@ async def generate_quiz(
     """Generate a multiple-choice quiz for the given topic.
 
     Calls QuizService directly — does not go through the graph.
-    Use the same session_id in /quiz/evaluate to resume from
-    the graph checkpoint created by /lessons/lesson.
     """
     topic_name = await _resolve_topic_name(db, request.topic_id, request.topic_name)
 
@@ -157,88 +161,149 @@ async def evaluate_quiz(
     request: EvaluateRequest,
     current_user: User = Depends(get_current_student),
 ) -> EvaluateResponse:
-    """Evaluate quiz answers via the LangGraph.
+    """Evaluate quiz answers directly — NO graph invocation.
 
-    The graph resumes from the checkpoint created by /lessons/lesson
-    using the same session_id. It runs: evaluate → route.
+    Reads the quiz (with correct answers) from the checkpoint created
+    by /lessons/lesson, enriches each submitted answer with its
+    correct_answer and is_correct flag, then calls EvaluationService
+    for scoring + LLM feedback.
 
-    When the routing decision is NEXT_TOPIC, ``next_lesson`` contains
-    the next topic's metadata (no pre-generated lesson — the frontend
-    calls /lessons/lesson for that).
+    This avoids restarting the full graph (parse → retrieve → tutor →
+    quiz → evaluate) which would regenerate a different quiz with
+    different correct answers, breaking scoring entirely.
     """
-    # Build graph state from request
-    state = initial_state(
-        session_id=request.session_id,
-        syllabus_id=request.syllabus_id,
-        learning_goal=request.learning_goal,
-        current_topic_id=request.topic_id,
-        current_topic_name=request.topic_name,
-        current_topic_difficulty=request.topic_difficulty,
-        topics=request.topics,
+    # session_id is now required (Field(..., min_length=1)) so it can never
+    # be empty at this point.  We use it directly as the thread_id — no
+    # silent fallback to topic_id, which would load the wrong checkpoint.
+    thread_id = request.session_id
+
+    _log.info(
+        "Evaluate: thread_id=%s topic_id=%s",
+        thread_id, request.topic_id,
     )
-    state["phase"] = "evaluate"
-    state["answers"] = request.answers
-    state["attempts_on_current"] = request.attempts_on_current
-    state["mastery_scores"] = {request.topic_id: request.mastery_score}
 
-    # initial_state() sets quiz/lesson/evaluation to None.  We must
-    # remove those keys so they don't overwrite the checkpoint values
-    # when LangGraph merges this state onto the existing thread.
-    for _key in ("quiz", "lesson", "evaluation", "retrieval_context", "retrieval_web"):
-        state.pop(_key, None)
-
-    # Invoke the graph — resumes from checkpoint
-    graph = get_graph()
-    config = {"configurable": {"thread_id": request.session_id or request.topic_id}}
+    # ── 1. Read quiz from the checkpoint ───────────────────────────────
+    checkpointer = get_checkpointer()
+    config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+    quiz_from_checkpoint: dict[str, Any] = {}
 
     try:
-        result = await graph.ainvoke(state, config)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Graph invocation failed: {exc}") from exc
-
-    if result.get("error"):
-        raise HTTPException(status_code=502, detail=result["error"])
-
-    evaluation = result.get("evaluation", {})
-    routing = result.get("routing_decision", "")
-    next_topic = result.get("next_topic_id")
-
-    # Build next_lesson info if advancing
-    next_lesson = None
-    if routing == "NEXT_TOPIC" and next_topic:
-        # Find the next topic in the topic list
-        topics = result.get("topics", request.topics)
-        for t in topics:
-            if t.get("id") == next_topic or t.get("slug") == next_topic:
-                next_lesson = NextTopicInfo(
-                    topic_id=next_topic,
-                    topic_name=t.get("name", ""),
-                    topic_description=t.get("description", ""),
-                    topic_difficulty=t.get("difficulty", "beginner"),
-                )
-                break
-        if next_lesson is None:
-            # Fallback: resolve topic name from DB
-            fallback_name = await _resolve_topic_name(db, next_topic, next_topic)
-            next_lesson = NextTopicInfo(
-                topic_id=next_topic,
-                topic_name=fallback_name,
-                topic_description="",
-                topic_difficulty="beginner",
+        checkpoint_tuple = await checkpointer.aget_tuple(config)
+        if checkpoint_tuple is not None and checkpoint_tuple.checkpoint:
+            channel_values = checkpoint_tuple.checkpoint.get("channel_values", {}) or {}
+            quiz_from_checkpoint = channel_values.get("quiz", {}) or {}
+            _log.info(
+                "Checkpoint loaded: thread_id=%s quiz_questions=%d",
+                thread_id,
+                len(quiz_from_checkpoint.get("questions", [])),
             )
+        else:
+            _log.critical(
+                "NO checkpoint for thread_id=%s (checkpoint_tuple=%s)",
+                thread_id,
+                "None" if checkpoint_tuple is None else "present but no checkpoint",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"No checkpoint found for thread_id={thread_id}. "
+                    f"The lesson+quiz was never saved, or was saved under a different "
+                    f"thread_id. Verify that /lessons/lesson was called with the same "
+                    f"session_id ({request.session_id}) before submitting answers."
+                ),
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        _log.exception("Could not read checkpoint for thread_id=%s", thread_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read checkpoint for thread_id={thread_id}",
+        )
+
+    # ── 2. Build correct-answer lookup from checkpoint quiz ────────────
+    quiz_questions = quiz_from_checkpoint.get("questions", [])
+    correct_map: dict[str, dict[str, str]] = {}
+    for q in quiz_questions:
+        qid = q.get("id", "")
+        if qid:
+            correct_map[qid] = {
+                "correct_answer": q.get("correct_answer", ""),
+                "concept_tag": q.get("concept_tag", "general"),
+                "question": q.get("question", ""),
+            }
+
+    _log.info(
+        "Correct map built: %d questions from checkpoint",
+        len(correct_map),
+    )
+
+    # ── 3. Enrich submitted answers with correct_answer + is_correct ───
+    enriched_answers: list[dict[str, Any]] = []
+    for a in request.answers:
+        qid = a.get("question_id", a.get("questionId", ""))
+        stored = correct_map.get(qid, {})
+        selected = a.get("selected_answer", a.get("selectedAnswer", ""))
+        correct = stored.get("correct_answer", "")
+        if not correct:
+            _log.critical(
+                "Scoring error: correct_answer is empty for qid=%r — in_map=%s map_keys=%s",
+                qid,
+                qid in correct_map,
+                list(correct_map.keys()),
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Scoring error: correct_answer is empty for question {qid}. "
+                    f"The checkpoint at thread_id={thread_id} may have been saved "
+                    f"with an empty or incomplete quiz. "
+                    f"correct_map keys: {list(correct_map.keys())}. "
+                    f"This is a server-side bug — no answer can be scored against empty data."
+                ),
+            )
+        is_correct = bool(selected.strip().lower() == correct.strip().lower())
+        _log.info(
+            "Evaluate answer: qid=%s selected=%r correct=%r is_correct=%s",
+            qid, selected, correct, is_correct,
+        )
+        enriched_answers.append({
+            "question_id": qid,
+            "question": stored.get("question", a.get("question", "")),
+            "selected_answer": selected,
+            "correct_answer": correct,
+            "is_correct": is_correct,
+            "concept_tag": stored.get("concept_tag", "general"),
+            "time_taken_seconds": a.get("time_taken_seconds", 30),
+        })
+
+    # ── 4. Evaluate: deterministic scoring + LLM feedback ──────────────
+    evaluator = EvaluationService()
+    evaluation = await evaluator.evaluate(
+        topic_name=request.topic_name,
+        questions=enriched_answers,
+    )
+
+    # ── 5. Simple score-based routing ──────────────────────────────────
+    score = evaluation.score
+    routing = "NEXT_TOPIC"
+    routing_reason = f"Score: {score:.0%}"
+    if score < 0.5:
+        routing = "REPEAT_TOPIC"
+        routing_reason = f"Score below 50% ({score:.0%}) — review recommended"
 
     return EvaluateResponse(
-        score=evaluation.get("score", 0.0),
-        total_questions=evaluation.get("total_questions", 0),
-        correct_count=evaluation.get("correct_count", 0),
-        incorrect_count=evaluation.get("incorrect_count", 0),
-        weak_concept_tags=evaluation.get("weak_concept_tags", []),
-        strong_concept_tags=evaluation.get("strong_concept_tags", []),
-        feedback=evaluation.get("feedback", ""),
+        score=round(score, 4),
+        total_questions=evaluation.total_questions,
+        correct_count=evaluation.correct_count,
+        incorrect_count=evaluation.incorrect_count,
+        weak_concept_tags=evaluation.weak_concept_tags,
+        strong_concept_tags=evaluation.strong_concept_tags,
+        feedback=evaluation.feedback,
         routing_decision=routing,
-        routing_reason=result.get("routing_reason", ""),
-        next_topic_id=next_topic,
-        next_lesson=next_lesson,
+        routing_reason=routing_reason,
+        next_topic_id=None,
+        next_lesson=None,
     )
 
 

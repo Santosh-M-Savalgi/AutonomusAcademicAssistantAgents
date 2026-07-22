@@ -1,8 +1,8 @@
-# Autonomous Academic Agent (AAA)
+# Autonomous Academic Agent (AAA) v2
 
 A multi-agent AI tutoring system that turns any learning goal — a topic, a course outline, or a syllabus PDF — into a personalized, adaptive curriculum. AAA researches each topic, teaches it, quizzes the student, and reroutes the learning path in real time based on quiz performance: mastering a topic advances the student, struggling triggers a re-teach, and persistent failure triggers automatic insertion of a prerequisite topic.
 
-Built with **LangGraph**, **FastAPI**, **Google Gemini**, **ChromaDB**, and **React**.
+Built with **LangGraph**, **FastAPI**, **DeepSeek**, **ChromaDB**, **PostgreSQL**, **Redis**, and **React + TypeScript**.
 
 ---
 
@@ -27,112 +27,170 @@ Built with **LangGraph**, **FastAPI**, **Google Gemini**, **ChromaDB**, and **Re
 A student describes what they want to learn (free text or an uploaded syllabus PDF). AAA then:
 
 1. **Decomposes** the request into an ordered list of topics, each tagged with difficulty and prerequisites.
-2. **Researches** the current topic via live web search, summarizing and embedding sources into a per-student vector store.
+2. **Researches** the current topic via live web search (Tavily), summarizing and embedding sources into a per-student vector store (ChromaDB).
 3. **Teaches** the topic as a structured lesson (concept → worked example → real-world analogy), grounded in the retrieved sources.
 4. **Quizzes** the student with generated comprehension questions.
 5. **Evaluates** answers for conceptual correctness (not exact wording) and routes the student:
-   - **Score ≥ 70** → advance to the next topic.
-   - **Score < 70** → re-teach the same topic.
-   - **3 failed attempts with score < 50** → infer and insert a prerequisite topic before continuing.
+   - **Score ≥ 70** → advance to the next topic (`NEXT_TOPIC`).
+   - **Score ≥ 50, < 70** → re-teach the same topic (`REVIEW_TOPIC`).
+   - **Score < 50**, not stuck → repeat quiz (`REPEAT_TOPIC`).
+   - **Stuck** (3+ failed attempts, score < 50) → infer and insert a prerequisite topic (`REVISIT_PREREQUISITE`).
 
-This loop repeats until the curriculum is complete, with full progress persisted so a session can be resumed at any time.
+This loop repeats until the curriculum is complete, with full progress persisted across PostgreSQL + Redis so a session can be resumed at any time.
 
 ## Architecture
 
-AAA is a three-agent system orchestrated by a LangGraph state machine. Agents don't call each other directly — they read and write to a shared, typed state object (`AAAState`), and the graph decides what runs next.
+AAA v2 is a multi-agent system orchestrated by a LangGraph state machine with durable checkpointing. Agents don't call each other directly — they read and write to a shared, typed state object (`AAAState`), and the graph decides what runs next.
 
 ```
-                         ┌─────────────────────┐
-                         │   Agent 1: Syllabus  │
-   Student request  ───► │       Parser         │
-   (text or PDF)         │  (Gemini structured  │
-                         │      output)         │
-                         └──────────┬───────────┘
+                         ┌──────────────────────────┐
+                         │  Node: parse_syllabus     │
+   Student request  ───► │  (DeepSeek LLM via        │
+   (text or PDF)         │   ProviderFactory)        │
+                         └──────────┬───────────────┘
                                     │ ordered topic queue
                                     ▼
-                         ┌─────────────────────┐
-                  ┌─────►│   Agent 2: Search    │
-                  │      │   & Retrieval        │
-                  │      │  (Tavily + Gemini    │
-                  │      │  summarize + embed)  │
-                  │      └──────────┬───────────┘
-                  │                 │ context stored in ChromaDB
-                  │                 ▼
-                  │      ┌─────────────────────┐
-                  │      │  Agent 3: Tutor/Quiz │
-                  │      │  teach → quiz →      │
-                  │      │  evaluate (Gemini)   │
-                  │      └──────────┬───────────┘
-                  │                 │ quiz score
-                  │                 ▼
-                  │        ┌─────────────────┐
-                  │        │  Routing Node    │
-                  │        │ (score-based)    │
-                  │        └───┬─────┬────┬───┘
-                  │   advance  │     │    │ insert prerequisite
-                  └────────────┘  reteach └──────────────────────►(back to search)
-                       (next topic)  │
-                                     └──────────► (back to teach)
+                         ┌──────────────────────────┐
+                         │  Node: retrieve_context   │
+                         │  (ChromaDB vector search) │
+                         └──────────┬───────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────────┐
+                         │  Node: retrieve_web       │
+                         │  (Tavily search + embed)  │
+                         └──────────┬───────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────────┐
+                         │  Node: generate_lesson    │
+                         │  (DeepSeek LLM, temp 0.3) │
+                         └──────────┬───────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────────┐
+                         │  Node: generate_quiz      │
+                         │  (DeepSeek LLM, temp 0.4) │
+                         └──────────┬───────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────────┐
+                         │  Node: evaluate_quiz      │
+                         │  (DeepSeek LLM, temp 0.3) │
+                         └──────────┬───────────────┘
+                                    │ routing decision
+                                    ▼
+                          ┌──────────────────────┐
+                          │    Routing Node       │
+                          │ NEXT_TOPIC  ──────────► END (advance)
+                          │ REVIEW_TOPIC ────────► back to teach
+                          │ REPEAT_TOPIC ────────► back to quiz
+                          │ REVISIT_PREREQUISITE ► back to teach
+                          └──────────────────────┘
 ```
 
-- **Agent 1 — Syllabus Parser** (`agents/syllabus_parser.py`): Converts a free-text goal or PDF into a prerequisite-ordered list of topics using Gemini's structured JSON output.
-- **Agent 2 — Search & Retrieval** (`agents/search_agent.py`): Runs a Tavily web search per topic, summarizes each result with Gemini (grounded, no hallucinated claims), embeds the summaries, and upserts them into a student-scoped ChromaDB collection. Falls back to Gemini's own knowledge if the search provider is unavailable.
-- **Agent 3 — Tutor & Quiz** (`agents/tutor_quiz_agent.py`): Retrieves the most relevant stored context above a cosine-similarity threshold, generates a structured lesson, produces comprehension questions, and scores student answers conceptually.
-- **Orchestration** (`orchestration/`): A `StateGraph` (LangGraph) wires the agents into nodes with conditional edges. `state.py` defines the shared `AAAState`/`TopicState` contracts; `nodes.py` wraps each agent call as a graph node; `graph.py` defines the routing logic and compiles the graph.
+- **Syllabus Parser** (`app/agents/syllabus_parser.py`): Converts a free-text goal into a prerequisite-ordered list of topics using the LLM via `ProviderFactory` (supports DeepSeek, Gemini, or mock providers).
+- **Retrieval** (`app/graph/nodes/retrieve.py`, `retrieve_web.py`): Hybrid retrieval — local ChromaDB vector search + Tavily web search with domain filtering. Falls back gracefully if Tavily is unavailable.
+- **Tutor Service** (`app/llm/tutor_service.py`): Generates structured lessons grounded in retrieved context.
+- **Quiz Service** (`app/llm/quiz_service.py`): Generates comprehension questions with distractor analysis.
+- **Evaluation Service** (`app/llm/evaluation_service.py`): Scores answers conceptually and provides detailed feedback.
+- **Orchestration** (`app/graph/`): LangGraph `StateGraph` with 7 nodes, conditional routing, and durable checkpointing (Redis hot storage + PostgreSQL durable storage). `state.py` defines the shared `AAAState` contract; `graph_builder.py` wires nodes and compiles the graph; `checkpointer.py` implements `AAACheckpointSaver`.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) (`StateGraph`, conditional routing) |
-| LLM | Google **Gemini** (`google-genai`) — structured JSON output via response schemas |
-| Web search | [Tavily](https://tavily.com/) |
+| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) (`StateGraph`, conditional routing, durable checkpoints) |
+| LLM (primary) | **DeepSeek** (`deepseek-v4-flash`) via `ProviderFactory` — also supports Gemini and mock |
+| LLM SDK | `httpx` (no OpenAI client dependency) |
+| Web search | [Tavily](https://tavily.com/) with domain filtering (25 edu/docs domains, 9 social-media exclusions) |
 | Vector store | [ChromaDB](https://www.trychroma.com/) (persistent, per-student collections, cosine distance) |
-| Relational persistence | SQLite (WAL mode, foreign keys, CHECK constraints) |
+| Relational DB | **PostgreSQL** via SQLAlchemy 2.0 + asyncpg (schema managed by Alembic) |
+| Cache / sessions | **Redis** (session hot storage, rate limiting, checkpoint cache) |
+| Object storage | MinIO / S3-compatible (document uploads, PDF storage) |
 | Backend API | [FastAPI](https://fastapi.tiangolo.com/) |
+| Auth | JWT (access + refresh tokens), bcrypt password hashing |
 | PDF parsing | [pypdf](https://pypdf.readthedocs.io/) |
-| Frontend | React 19 + Vite |
+| Observability | Prometheus metrics, OpenTelemetry tracing, structlog JSON logging |
+| Resilience | tenacity (LLM retries with exponential backoff) |
+| Frontend | React 19 + TypeScript + Vite |
 | Icons | [lucide-react](https://lucide.dev/) |
-| Testing | pytest, httpx |
+| Testing | pytest, pytest-asyncio |
+| Linting | ruff |
 
 ## Project Structure
 
 ```
-AutonomusAcademicAssistantAgents/
+AAA-v2/
 ├── backend/
-│   ├── agents/
-│   │   ├── syllabus_parser.py     # Agent 1: text/PDF → ordered topic list
-│   │   ├── search_agent.py        # Agent 2: search, summarize, embed, store
-│   │   └── tutor_quiz_agent.py    # Agent 3: teach, quiz, evaluate
-│   ├── orchestration/
-│   │   ├── state.py               # AAAState / TopicState TypedDicts
-│   │   ├── nodes.py                # Graph nodes wrapping each agent
-│   │   └── graph.py                 # StateGraph wiring + routing functions
-│   ├── persistence/
-│   │   ├── db.py                  # SQLite schema + connection management
-│   │   └── vector_store.py        # ChromaDB client + Gemini embeddings
-│   ├── api/
-│   │   ├── routes.py              # REST endpoints (/api/v1/...)
-│   │   └── schemas.py             # Pydantic request/response models
-│   ├── tests/                     # pytest suite (agents, graph, API)
-│   ├── config.py                  # Environment-driven settings
-│   ├── main.py                    # FastAPI app + exception handlers
-│   ├── requirements.txt
-│   └── .env.example
-└── frontend/
-    ├── src/
-    │   ├── components/
-    │   │   ├── Onboarding.jsx       # Text or PDF syllabus input
-    │   │   ├── SyllabusOverview.jsx # Curriculum roadmap / topic timeline
-    │   │   ├── LessonView.jsx       # Lesson content + cited sources
-    │   │   ├── QuizView.jsx         # Quiz questions + answer submission
-    │   │   ├── ProfileView.jsx      # Progress log / weak topics
-    │   │   ├── CurriculumPath.jsx   # Visual topic path
-    │   │   └── ProgressBar.jsx
-    │   ├── api.js                  # Typed fetch client for the backend API
-    │   └── App.jsx                  # Screen router + session state
-    ├── package.json
-    └── vite.config.js
+│   ├── app/
+│   │   ├── agents/              # Syllabus parser agent (ProviderFactory-based)
+│   │   ├── adaptive/            # Adaptive routing engine, diagnostics, planner, recommendations
+│   │   ├── analytics/           # Learning analytics, mastery calculations, dashboard data
+│   │   ├── api/                 # FastAPI health endpoint + v2 router
+│   │   │   └── v2/              # REST API v2 (learning, quiz, lessons, analytics, auth, etc.)
+│   │   ├── auth/                # JWT handler, password hashing, auth dependencies, service
+│   │   ├── core/                # Settings (Pydantic), exceptions, logging, rate limiting, security
+│   │   ├── db/                  # PostgreSQL (SQLAlchemy), ChromaDB client, Redis, object storage
+│   │   │   ├── models/          # SQLAlchemy ORM models (session, quiz, learning, user)
+│   │   │   └── migrations/      # Alembic migration scripts
+│   │   ├── graph/               # LangGraph orchestration
+│   │   │   ├── nodes/           # Graph nodes (parse, retrieve, retrieve_web, teach, quiz, evaluate)
+│   │   │   ├── state.py         # AAAState TypedDict
+│   │   │   ├── graph_builder.py # StateGraph wiring + routing
+│   │   │   └── checkpointer.py  # AAACheckpointSaver (Redis + Postgres)
+│   │   ├── ingestion/           # Document processing, chunking, embedding, vector store
+│   │   ├── jobs/                # Background job queue, scheduler, worker, task definitions
+│   │   ├── llm/                 # LLM provider abstraction
+│   │   │   ├── providers/       # DeepSeekProvider, GeminiProvider, MockProvider
+│   │   │   ├── provider_router.py    # ProviderFactory + registry
+│   │   │   ├── tutor_service.py      # Lesson generation
+│   │   │   ├── quiz_service.py       # Quiz generation
+│   │   │   └── evaluation_service.py # Answer evaluation
+│   │   ├── middleware/           # Rate limiting, request context, security headers
+│   │   ├── monitoring/           # Prometheus metrics, OpenTelemetry tracing
+│   │   ├── services/             # Adaptive routing, context building, knowledge graph, mastery
+│   │   ├── session/              # Session management (Redis + Postgres)
+│   │   ├── workers/              # Background worker processes
+│   │   └── main.py               # FastAPI app factory
+│   ├── tests/                    # pytest suite
+│   │   ├── unit/                 # Unit tests (adaptive_routing, checkpointer, chunking, etc.)
+│   │   ├── integration/          # Integration tests (quiz scoring, etc.)
+│   │   ├── adaptive/             # Adaptive engine tests
+│   │   ├── analytics/            # Analytics tests
+│   │   ├── auth/                 # Auth tests (API, JWT, password, service)
+│   │   ├── e2e/                  # End-to-end tests
+│   │   ├── jobs/                 # Job queue tests
+│   │   └── session/              # Session management tests
+│   ├── pyproject.toml            # Project metadata + build config
+│   ├── requirements.txt          # pip-compatible dependency list
+│   ├── Dockerfile
+│   ├── docker-entrypoint.sh
+│   ├── alembic.ini
+│   └── pytest.ini
+├── frontend/
+│   ├── src/
+│   │   ├── api/                  # Typed fetch clients for backend
+│   │   ├── components/           # Reusable UI components
+│   │   ├── pages/                # Route-level pages (learning, auth, dashboard)
+│   │   ├── services/             # Business logic services (learning API, etc.)
+│   │   ├── hooks/                # Custom React hooks
+│   │   ├── contexts/             # React context providers
+│   │   ├── types/                # TypeScript type definitions
+│   │   ├── utils/                # Utility functions
+│   │   ├── constants/            # App constants
+│   │   ├── routes/               # Route configuration
+│   │   ├── layouts/              # Page layouts
+│   │   ├── theme/                # MUI / custom theme
+│   │   └── main.tsx              # React entry point
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── vite.config.ts
+├── architecture/                 # Architecture docs, roadmap, decisions, progress
+├── docker/                       # Docker config directory
+├── infra/                        # CI + Kubernetes configs
+├── docker-compose.yml            # Full stack orchestration
+└── README.md
 ```
 
 ## Getting Started
@@ -141,25 +199,46 @@ AutonomusAcademicAssistantAgents/
 
 - Python 3.11+
 - Node.js 18+
-- A [Google Gemini API key](https://ai.google.dev/)
-- A [Tavily API key](https://tavily.com/) (optional — the search agent falls back to Gemini's own knowledge if omitted, with reduced grounding)
+- PostgreSQL 16+
+- Redis 7+
+- A [DeepSeek API key](https://platform.deepseek.com/) (primary LLM)
+- A [Tavily API key](https://tavily.com/) (optional — web search falls back gracefully if omitted)
+- (Optional) A [Google Gemini API key](https://ai.google.dev/) for Gemini provider support
 
-### Backend setup
+### Quick start with Docker
+
+```bash
+# Start all services (PostgreSQL, Redis, ChromaDB, MinIO, backend, frontend)
+docker compose up -d
+```
+
+The API will be available at `http://127.0.0.1:8000`, with interactive docs at `http://127.0.0.1:8000/docs`. The frontend runs at `http://localhost:5173`.
+
+### Backend setup (manual)
 
 ```bash
 cd backend
+
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
+# Install dependencies
 pip install -r requirements.txt
 
+# Copy and configure environment
 cp .env.example .env
-# then edit .env and set GEMINI_API_KEY (and optionally TAVILY_API_KEY)
+# Edit .env — set at minimum:
+#   DEEPSEEK_API_KEY=sk-...
+#   LLM_PROVIDER=deepseek
+#   (Optionally: TAVILY_API_KEY=tvly-...)
 
-uvicorn main:app --reload --port 8000
+# Run database migrations
+alembic upgrade head
+
+# Start the server
+uvicorn app.main:app --reload --port 8000
 ```
-
-The API will be available at `http://127.0.0.1:8000`, with interactive docs at `http://127.0.0.1:8000/docs`.
 
 ### Frontend setup
 
@@ -169,87 +248,127 @@ npm install
 npm run dev
 ```
 
-The app runs at `http://localhost:5173` by default and talks to the backend at `http://127.0.0.1:8000/api/v1` (override with a `VITE_API_BASE_URL` environment variable).
+The app runs at `http://localhost:5173` by default and talks to the backend at `http://127.0.0.1:8000/api/v2` (override with `VITE_API_BASE_URL`).
 
 ## API Reference
 
-All endpoints are prefixed with `/api/v1`.
+All v2 endpoints are prefixed with `/api/v2`. Authentication uses JWT Bearer tokens.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/students` | Create a student from a free-text learning goal. Returns `student_id` and the generated syllabus. |
-| `POST` | `/students/upload-syllabus` | Create a student from an uploaded PDF syllabus (`multipart/form-data`). |
-| `GET` | `/students/{student_id}` | Fetch a student's profile. |
-| `POST` | `/students/{student_id}/start` | Run the search → teach → quiz pipeline for the current topic. |
-| `GET` | `/students/{student_id}/lesson` | Get the generated lesson content and source citations for the active topic. |
-| `GET` | `/students/{student_id}/quiz` | Get the generated quiz questions for the active topic. |
-| `POST` | `/students/{student_id}/answer` | Submit quiz answers; triggers evaluation and adaptive routing. |
-| `GET` | `/students/{student_id}/profile` | Get a dashboard-style view: taught, pending, and weak topics. |
-| `GET` | `/students/{student_id}/topics` | Get the full topic list with statuses, scores, and attempts. |
-| `GET` | `/health` | Health check. |
+| `POST` | `/api/v2/auth/register` | Register a new user account. |
+| `POST` | `/api/v2/auth/login` | Login and receive access + refresh tokens. |
+| `POST` | `/api/v2/auth/refresh` | Refresh an expired access token. |
+| `POST` | `/api/v2/learning/goal` | Create a learning goal → returns syllabus + session + roadmap. |
+| `GET` | `/api/v2/learning/sessions` | List all learning sessions for the authenticated user. |
+| `GET` | `/api/v2/learning/sessions/{id}` | Get session status and progress. |
+| `GET` | `/api/v2/lessons/{session_id}` | Get the current lesson for a session. |
+| `GET` | `/api/v2/quiz/{session_id}` | Get the current quiz questions. |
+| `POST` | `/api/v2/quiz/{session_id}/submit` | Submit quiz answers → triggers evaluation and adaptive routing. |
+| `GET` | `/api/v2/analytics/dashboard` | Dashboard with learning stats and mastery overview. |
+| `GET` | `/api/v2/analytics/topics/{session_id}` | Topic-level progress with scores and attempts. |
+| `GET` | `/api/v2/jobs/{job_id}` | Check status of a background job. |
+| `GET` | `/health` | Health check (includes DB, Redis, ChromaDB dependency checks). |
+| `GET` | `/metrics` | Prometheus metrics endpoint. |
 
 Errors follow a consistent shape:
 
 ```json
-{ "error": { "code": "student_not_found", "message": "Student not found" } }
+{
+  "error": {
+    "code": "session_not_found",
+    "message": "No session found with the given ID",
+    "details": {}
+  }
+}
 ```
 
 ## Adaptive Routing Logic
 
-The core decision after every quiz lives in `orchestration/graph.py`:
+The routing decision in `app/graph/graph_builder.py` after quiz evaluation:
 
 ```python
-def route_after_evaluation(state):
-    current = state["syllabus"][state["current_topic_index"]]
-    if current["quiz_score"] >= 70:
-        return "advance_topic"
-    if current["attempts"] >= 3 and current["quiz_score"] < 50:
-        return "infer_prerequisite"
-    return "reteach_topic"
+def _route_after_evaluate(state: AAAState) -> str:
+    score = state.get("quiz_score", 0)
+    attempts = state.get("quiz_attempts", 0)
+
+    if score >= 70:
+        return "NEXT_TOPIC"          # Mastered → advance
+    if score >= 50:
+        return "REVIEW_TOPIC"        # Close → re-teach with better content
+    if attempts >= 3:
+        return "REVISIT_PREREQUISITE" # Stuck → insert prerequisite
+    return "REPEAT_TOPIC"            # Try again → new quiz on same topic
 ```
 
-- **Mastery (≥ 70):** topic marked `taught`, student advances.
-- **Struggling (< 70, < 3 attempts or score ≥ 50):** topic is re-taught with freshly generated content.
-- **Stuck (≥ 3 attempts, score < 50):** the topic is marked `critical`, and a beginner-level prerequisite topic is synthesized and inserted directly before it in the syllabus — the student detours through the gap before retrying.
-
-Each topic tracks its own `status`, `quiz_score`, `attempts`, and `inferred_gap`, so the full learning history per topic is auditable from the `topics` endpoint.
+- **Mastery (≥ 70):** topic marked complete, student advances to next topic.
+- **Close (50–69):** topic re-taught with refreshed content and different examples.
+- **Needs practice (< 50, < 3 attempts):** new quiz generated on same topic.
+- **Stuck (≥ 3 attempts, score < 50):** a prerequisite topic is synthesized and inserted — student backfills the gap before retrying.
 
 ## Testing
 
 ```bash
 cd backend
+
+# Run all tests
 pytest
+
+# Run specific suites
+pytest tests/unit/
+pytest tests/integration/
+pytest tests/auth/
+pytest tests/adaptive/
+
+# With coverage
+pytest --cov=app --cov-report=term-missing
 ```
 
-The suite covers each agent in isolation, the LangGraph routing/state contracts, and the API layer (`tests/test_agent1.py`, `test_agent2.py`, `test_agent3.py`, `test_graph_routing.py`, `test_api.py`).
+The suite covers: unit tests (adaptive routing, checkpointer, chunking, embedding abstraction, evaluation), integration tests (quiz scoring), auth tests (JWT, password, API), session tests, job queue tests, adaptive engine tests, and e2e tests.
 
 ## Configuration
 
-All configuration is environment-driven via `backend/config.py` / `.env`:
+All configuration is environment-driven via `backend/app/core/config.py` / `.env`:
 
 | Variable | Required | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | Yes | Used for syllabus parsing, summarization, teaching, quizzing, evaluation, and embeddings. |
-| `TAVILY_API_KEY` | No | Used for live web search. Falls back to Gemini's internal knowledge if missing or if a search call fails. |
-| `SQLITE_DB_PATH` | No | Path to the SQLite database file. Defaults to `./data/aaa.db`. |
-| `CHROMA_DB_PATH` | No | Path to the persistent ChromaDB store. Defaults to `./chroma_store`. |
-| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins. Defaults to `http://localhost:5173`. |
+| `LLM_PROVIDER` | Yes | LLM provider: `deepseek`, `gemini`, or `mock`. Defaults to `mock` for dev safety. |
+| `DEEPSEEK_API_KEY` | If `LLM_PROVIDER=deepseek` | DeepSeek API key. App refuses to start if missing. |
+| `GEMINI_API_KEY` | If `LLM_PROVIDER=gemini` | Google Gemini API key. |
+| `TAVILY_API_KEY` | No | Web search API key. Falls back gracefully if omitted. |
+| `POSTGRES_DSN` | Yes | PostgreSQL connection string (asyncpg). Default: `postgresql+asyncpg://aaa:aaa_password@postgres:5432/aaa` |
+| `REDIS_URL` | Yes | Redis connection URL. Default: `redis://redis:6379/0` |
+| `CHROMA_HOST` | No | ChromaDB host. Default: `chroma` |
+| `CHROMA_PORT` | No | ChromaDB port. Default: `8000` |
+| `CORS_ORIGINS` | No | Comma-separated CORS origins. Default: `http://localhost:5173` |
+| `ENABLE_RATE_LIMIT` | No | Enable rate limiting middleware. Default: `true` |
+| `LOG_LEVEL` | No | Logging level. Default: `INFO` |
 
-Model selection (also in `config.py`):
+LLM model configuration:
 
-| Purpose | Model |
-|---|---|
-| Syllabus parsing | `gemini-2.5-flash-lite` |
-| Search summarization | `gemini-2.5-flash-lite` |
-| Teaching / quiz / evaluation | `gemini-2.5-flash` |
-| Embeddings | `gemini-embedding-001` (768 dimensions) |
+| Purpose | Model | Temperature |
+|---|---|---|
+| Syllabus parsing | `deepseek-v4-flash` | default (0.7) |
+| Lesson generation | `deepseek-v4-flash` | 0.3 |
+| Quiz generation | `deepseek-v4-flash` | 0.4 |
+| Evaluation feedback | `deepseek-v4-flash` | 0.3 |
 
 ## Roadmap
 
-- [ ] Multi-student authentication (currently identified by opaque `student_id`)
-- [ ] Streaming lesson generation
-- [ ] Spaced-repetition review scheduling for `weak`/`strong` topics
-- [ ] Deployment guide (Docker / cloud)
+- [x] Multi-provider LLM abstraction (DeepSeek, Gemini, mock)
+- [x] JWT authentication with refresh tokens
+- [x] PostgreSQL + Redis persistence
+- [x] Durable LangGraph checkpointing (Redis hot + Postgres durable)
+- [x] Background job queue with worker pool
+- [x] Prometheus metrics + OpenTelemetry tracing
+- [x] Structured JSON logging (structlog)
+- [x] Rate limiting middleware
+- [x] Docker Compose full-stack deployment
+- [ ] Streaming lesson generation (SSE)
+- [ ] Spaced-repetition review scheduling
+- [ ] Multi-tenant / organization support
+- [ ] Admin dashboard with usage analytics
+- [ ] Kubernetes Helm chart for production deployment
 
 ## Contributors
 

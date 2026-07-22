@@ -133,10 +133,6 @@ function StatCardItem({ label, value, icon, variant = 'default', delay = 0 }: St
   )
 }
 
-// ─── Module-level guard against StrictMode double-fire ─────────
-
-const evaluateInFlight = new Set<string>()
-
 // ─── Quiz Results Page ───────────────────────────────────────────
 
 export function QuizResultsPage() {
@@ -159,34 +155,24 @@ export function QuizResultsPage() {
   const topicName = locationState?.topicName ?? 'Topic'
   const sessionId = locationState?.sessionId ?? ''
 
-  const evaluateMutation = useEvaluateQuiz()
+  // ── Evaluate via fetchQuery — survives StrictMode via query cache ──
 
-  // Submit for evaluation on mount — guarded against StrictMode double-fire.
-  // Module-level Set survives remounts (unlike useMutation.isPending which
-  // starts as false on every new mutation instance in StrictMode).
-  useEffect(() => {
-    const dedupKey = `${topicId}:${sessionId}`
-    if (answers && topicId && !evaluateInFlight.has(dedupKey)) {
-      evaluateInFlight.add(dedupKey)
-      evaluateMutation.mutate({
-        topic_id: topicId,
-        topic_name: topicName,
-        session_id: sessionId,
-        answers,
-      }, {
-        onSettled: () => {
-          evaluateInFlight.delete(dedupKey)
-        },
-      })
-    }
-    // Only run on mount when answers/topicId are available
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const evaluateRequest: EvaluateRequest | null =
+    answers && topicId
+      ? {
+          topic_id: topicId,
+          topic_name: topicName,
+          session_id: sessionId,
+          answers,
+        }
+      : null
+
+  const evaluateQuery = useEvaluateQuiz(topicId, sessionId, evaluateRequest)
 
   // ── Auto-advance: navigate to next lesson when NEXT_TOPIC ─────────
   useEffect(() => {
-    if (!evaluateMutation.isSuccess || !evaluateMutation.data) return
-    const result = evaluateMutation.data
+    if (!evaluateQuery.isSuccess || !evaluateQuery.data) return
+    const result = evaluateQuery.data
     if (result.routing_decision === 'NEXT_TOPIC' && result.next_lesson) {
       const nl = result.next_lesson
       // Navigate to lesson with the next topic's data
@@ -200,11 +186,15 @@ export function QuizResultsPage() {
         replace: true,
       })
     }
-  }, [evaluateMutation.isSuccess, evaluateMutation.data, navigate])
+  }, [evaluateQuery.isSuccess, evaluateQuery.data, navigate])
 
   // ── Derived data ──────────────────────────────────────────────
+  // Read from module-level cache first — survives StrictMode remounts.
+  // Falls back to mutation state for the first mount that initiated the request.
 
-  const evaluation: EvaluateResult | undefined = evaluateMutation.data
+  const dedupKey = `${topicId}:${sessionId}`
+  const evaluation: EvaluateResult | undefined =
+    evaluateQuery.data
 
   const score = evaluation?.score ?? 0
   const totalQuestions = evaluation?.total_questions ?? locationState?.totalQuestions ?? 0
@@ -261,7 +251,7 @@ export function QuizResultsPage() {
 
   // ── State: loading evaluation ─────────────────────────────────
 
-  if (evaluateMutation.isPending) {
+  if (evaluateQuery.isPending) {
     return (
       <div className="min-h-screen bg-background p-6 flex items-center justify-center" aria-label="Evaluating quiz results">
         <div className="flex flex-col items-center text-center">
@@ -285,7 +275,7 @@ export function QuizResultsPage() {
 
   // ── State: error ──────────────────────────────────────────────
 
-  if (evaluateMutation.isError) {
+  if (evaluateQuery.isError) {
     return (
       <div className="min-h-screen bg-background p-6 flex items-center justify-center" aria-label="Evaluation error state">
         <Card className="max-w-md w-full text-center" padding="lg">
@@ -294,17 +284,13 @@ export function QuizResultsPage() {
             Error evaluating quiz
           </h2>
           <p className="text-sm text-text-secondary mb-6">
-            {(evaluateMutation.error as Error)?.message ??
+            {(evaluateQuery.error as Error)?.message ??
               'An unexpected error occurred while evaluating your answers.'}
           </p>
           <Button
             variant="primary"
             icon={<RotateCcw className="h-4 w-4" />}
-            onClick={() => evaluateMutation.mutate({
-              topic_id: topicId!,
-              topic_name: topicName,
-              answers,
-            })}
+            onClick={() => evaluateQuery.refetch()}
             aria-label="Retry evaluation"
           >
             Retry

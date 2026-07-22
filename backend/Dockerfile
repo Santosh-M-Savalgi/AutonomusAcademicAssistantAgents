@@ -36,10 +36,14 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code (changes most frequently — last layer)
 COPY app ./app
 
+# Alembic configuration and migrations (needed for alembic upgrade head at startup)
+COPY alembic.ini ./
+COPY docker-entrypoint.sh ./
+RUN chmod +x /app/docker-entrypoint.sh
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=5 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"
 
-# Run with 1 worker by default; scale via WEB_CONCURRENCY env var
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

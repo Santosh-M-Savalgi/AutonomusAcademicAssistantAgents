@@ -71,26 +71,9 @@ async def evaluate_quiz_node(state: AAAState) -> AAAState:
     # compute is_correct before passing to EvaluationService.
     quiz_questions = state.get("quiz", {}).get("questions", [])
     logger.info(
-        "EVAL-DIAG: answers_count=%d quiz_questions_count=%d state_keys=%s quiz_keys=%s",
-        len(answers),
-        len(quiz_questions),
-        sorted(state.keys()),
-        sorted(state.get("quiz", {}).keys()) if isinstance(state.get("quiz"), dict) else "NOT_DICT",
+        "Evaluate node: answers=%d quiz_questions=%d phase=%s",
+        len(answers), len(quiz_questions), state.get("phase"),
     )
-    if quiz_questions:
-        first_q = quiz_questions[0]
-        logger.info(
-            "EVAL-DIAG: first_quiz_q id=%s correct_answer=%r options=%d",
-            first_q.get("id"), first_q.get("correct_answer"),
-            len(first_q.get("options", [])),
-        )
-    if answers:
-        first_a = answers[0]
-        logger.info(
-            "EVAL-DIAG: first_answer id=%s selected=%r",
-            first_a.get("question_id", first_a.get("questionId")),
-            first_a.get("selected_answer", first_a.get("selectedAnswer")),
-        )
     correct_map: dict[str, dict[str, str]] = {}
     for q in quiz_questions:
         qid = q.get("id", "")
@@ -100,6 +83,7 @@ async def evaluate_quiz_node(state: AAAState) -> AAAState:
                 "concept_tag": q.get("concept_tag", "general"),
                 "question": q.get("question", ""),
             }
+    logger.info("Correct map built: %d questions", len(correct_map))
 
     enriched_answers: list[dict] = []
     for a in answers:
@@ -107,7 +91,21 @@ async def evaluate_quiz_node(state: AAAState) -> AAAState:
         stored = correct_map.get(qid, {})
         selected = a.get("selected_answer", a.get("selectedAnswer", ""))
         correct = stored.get("correct_answer", "")
+        if not correct:
+            logger.critical(
+                "Scoring error: correct_answer is empty for qid=%r — in_map=%s",
+                qid, qid in correct_map,
+            )
+            raise ValueError(
+                f"Scoring error: correct_answer is empty for question {qid}. "
+                f"in_correct_map={qid in correct_map}, "
+                f"correct_map_keys={list(correct_map.keys())}"
+            )
         is_correct = selected.strip().lower() == correct.strip().lower()
+        logger.info(
+            "Evaluate answer: qid=%s selected=%r correct=%r is_correct=%s",
+            qid, selected, correct, is_correct,
+        )
         enriched_answers.append({
             "question_id": qid,
             "question": stored.get("question", a.get("question", "")),

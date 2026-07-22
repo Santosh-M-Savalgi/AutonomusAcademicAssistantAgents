@@ -45,8 +45,9 @@ async def upsert_session_checkpoint(
     path_stack: dict | None = None,
     current_topic_id: uuid.UUID | None = None,
     status: str | None = None,
+    checkpoint_data: dict | None = None,
 ) -> Session | None:
-    """Update a session's checkpoint pointer and metadata.
+    """Update a session's checkpoint pointer, metadata, and full checkpoint data.
 
     Only UPDATES existing session rows. Does NOT create new sessions.
     If the session doesn't exist in Postgres, logs a warning and returns None.
@@ -54,6 +55,11 @@ async def upsert_session_checkpoint(
 
     Used by the LangGraph checkpointer to persist durable state
     after every graph-node transition (Section 18.1).
+
+    .. versionchanged:: 2026-07-22
+        Added ``checkpoint_data`` parameter (JSONB column) so the Postgres
+        rehydration path can return the actual serialized Checkpoint instead
+        of ``empty_checkpoint()``.
     """
     now = datetime.now(timezone.utc)
     session = await get_session_by_id(db, session_id)
@@ -76,6 +82,8 @@ async def upsert_session_checkpoint(
         session.current_topic_id = current_topic_id
     if status is not None:
         session.status = status
+    if checkpoint_data is not None:
+        session.checkpoint_data = checkpoint_data
     return session
 
 

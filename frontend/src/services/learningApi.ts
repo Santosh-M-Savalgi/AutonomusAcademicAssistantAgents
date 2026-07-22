@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import type {
@@ -171,8 +172,10 @@ export const lessonKeys = {
 /**
  * Query hook that returns a lesson for a topic.
  *
- * Uses React Query's query cache, which survives StrictMode remounts
- * (unlike mutation state which resets when the last observer unsubscribes).
+ * Uses queryClient.fetchQuery() under the hood, which deduplicates
+ * in-flight requests for the same query key. This prevents StrictMode
+ * double-mounts from firing two HTTP requests to /lessons/lesson.
+ *
  * Retries are capped at 2 attempts with exponential backoff.
  */
 export function useLesson(
@@ -180,10 +183,13 @@ export function useLesson(
   request: LessonRequest,
   opts?: { enabled?: boolean },
 ) {
-  return useQuery<Lesson>({
-    queryKey: lessonKeys.detail(topicId ?? '__none__'),
+  const queryClient = useQueryClient()
+  const key = lessonKeys.detail(topicId ?? '__none__')
+
+  const query = useQuery<Lesson>({
+    queryKey: key,
     queryFn: ({ signal }) => fetchLesson(request),
-    enabled: opts?.enabled ?? !!topicId,
+    enabled: false, // never auto-fetch — we trigger via fetchQuery below
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     retry: 2,
@@ -191,6 +197,22 @@ export function useLesson(
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   })
+
+  // Trigger fetch via fetchQuery — built-in dedup for same key.
+  // Even if StrictMode double-fires this effect, fetchQuery will
+  // find the first in-flight request and wait for it.
+  useEffect(() => {
+    if (opts?.enabled ?? !!topicId) {
+      queryClient.fetchQuery({
+        queryKey: key,
+        queryFn: ({ signal }) => fetchLesson(request),
+        staleTime: 10 * 60 * 1000,
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicId])
+
+  return query
 }
 
 // ─── Quiz Pre-generation (query-based, shared cache) ────────────
@@ -231,17 +253,52 @@ export function useQuiz(
   })
 }
 
-export function useEvaluateQuiz() {
+/** Raw API call for quiz evaluation. */
+async function fetchEvaluate(request: EvaluateRequest): Promise<EvaluateResult> {
+  const { data } = await apiClient.post<EvaluateResult>('/api/v2/quiz/evaluate', request)
+  return data
+}
+
+/** Query-key factory for evaluate results. */
+export const evaluateKeys = {
+  detail: (topicId: string, sessionId: string) => ['evaluate', topicId, sessionId] as const,
+}
+
+/**
+ * Evaluate a quiz and return the result.
+ *
+ * Uses queryClient.fetchQuery() which deduplicates in-flight requests
+ * for the same key. State survives StrictMode remounts via React Query's
+ * query cache — unlike useMutation which creates a new instance each time.
+ */
+export function useEvaluateQuiz(
+  topicId: string | undefined,
+  sessionId: string,
+  request: EvaluateRequest | null,
+) {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async (request: EvaluateRequest) => {
-      const { data } = await apiClient.post<EvaluateResult>('/api/v2/quiz/evaluate', request)
-      return data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    },
+  const key = evaluateKeys.detail(topicId ?? '__none__', sessionId)
+
+  const query = useQuery<EvaluateResult>({
+    queryKey: key,
+    queryFn: ({ signal }) => fetchEvaluate(request!),
+    enabled: false,
+    staleTime: 0,
   })
+
+  useEffect(() => {
+    if (request && topicId) {
+      queryClient.fetchQuery({
+        queryKey: key,
+        queryFn: ({ signal }) => fetchEvaluate(request),
+        staleTime: 0,
+      }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      })
+    }
+  }, [topicId, sessionId])
+
+  return query
 }
 
 // ─── Adaptive Hooks ───────────────────────────────────────────

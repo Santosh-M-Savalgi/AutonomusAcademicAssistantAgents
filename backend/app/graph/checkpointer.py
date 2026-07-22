@@ -132,19 +132,33 @@ class AAACheckpointSaver(BaseCheckpointSaver):
             factory = get_session_factory()
             async with factory() as db:
                 session = await get_session_by_id(db, thread_uuid)
-                if session is None or session.graph_checkpoint_id is None:
+                if session is None:
                     return None
-                return CheckpointTuple(
-                    config={"configurable": {"thread_id": thread_id}},
-                    checkpoint=empty_checkpoint(),
-                    metadata={
-                        "source": "postgres",
-                        "checkpoint_id": session.graph_checkpoint_id,
-                        "path_stack": session.path_stack,
-                    },
-                    parent_config=None,
+                if session.checkpoint_data:
+                    checkpoint = _deserialize_checkpoint(session.checkpoint_data)
+                    return CheckpointTuple(
+                        config={"configurable": {"thread_id": thread_id}},
+                        checkpoint=checkpoint,
+                        metadata={
+                            "source": "postgres",
+                            "checkpoint_id": (
+                                session.checkpoint_data.get("id")
+                                or session.graph_checkpoint_id
+                            ),
+                            "path_stack": session.path_stack,
+                        },
+                        parent_config=None,
+                    )
+                # No checkpoint_data — the session exists but was never checkpointed.
+                # Return None rather than a silent empty state so callers can
+                # distinguish "no checkpoint" from "empty checkpoint."
+                logger.warning(
+                    "aget_tuple() Postgres fallback: session %s has no checkpoint_data",
+                    thread_id,
                 )
+                return None
         except Exception:
+            logger.exception("aget_tuple() Postgres fallback failed for thread %s", thread_id)
             return None
 
     async def aput(
@@ -190,6 +204,7 @@ class AAACheckpointSaver(BaseCheckpointSaver):
                     thread_uuid,
                     graph_checkpoint_id=checkpoint_id,
                     path_stack=path_stack,
+                    checkpoint_data=_serialize_checkpoint(checkpoint),
                     current_topic_id=(
                         uuid.UUID(current_topic_id)
                         if isinstance(current_topic_id, str)
@@ -257,15 +272,22 @@ class AAACheckpointSaver(BaseCheckpointSaver):
                 session = await get_session_by_id(db, thread_uuid)
                 if session is None:
                     return
-                yield CheckpointTuple(
-                    config={"configurable": {"thread_id": thread_id}},
-                    checkpoint=empty_checkpoint(),
-                    metadata={
-                        "source": "postgres",
-                        "checkpoint_id": session.graph_checkpoint_id,
-                        "path_stack": session.path_stack,
-                    },
-                    parent_config=None,
-                )
+                if session.checkpoint_data:
+                    checkpoint = _deserialize_checkpoint(session.checkpoint_data)
+                    yield CheckpointTuple(
+                        config={"configurable": {"thread_id": thread_id}},
+                        checkpoint=checkpoint,
+                        metadata={
+                            "source": "postgres",
+                            "checkpoint_id": (
+                                session.checkpoint_data.get("id")
+                                or session.graph_checkpoint_id
+                            ),
+                            "path_stack": session.path_stack,
+                        },
+                        parent_config=None,
+                    )
+                # No checkpoint_data — silently yield nothing
         except Exception:
+            logger.exception("alist() failed for thread %s", thread_id)
             return

@@ -141,7 +141,11 @@ async def generate_lesson(
 
     # Invoke the graph
     graph = get_graph()
-    thread_id = request.session_id or request.topic_id
+    # session_id must be valid — the checkpoint is keyed by session_id so
+    # /quiz/evaluate (which uses session_id) can find the stored quiz.
+    # Never fall back to topic_id — that creates two separate checkpoint
+    # namespaces and silently breaks scoring.
+    thread_id = request.session_id
     config = {"configurable": {"thread_id": thread_id}}
 
     logger.info(

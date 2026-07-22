@@ -668,6 +668,7 @@ async def get_learning_roadmap(
                 status="active",
             )
             db.add(session)
+            await db.commit()
         except Exception:
             _log.warning("Failed to create session for roadmap — proceeding without")
 

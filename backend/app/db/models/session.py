@@ -55,6 +55,12 @@ class Session(Base, IdMixin):
     )
     path_stack: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     graph_checkpoint_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checkpoint_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    """Full serialized LangGraph checkpoint (Section 18.1 durable fallback).
+
+    Persisted on every checkpoint write so the Postgres rehydration path
+    can return the real Checkpoint, not ``empty_checkpoint()``.
+    """
     status: Mapped[SessionStatus] = mapped_column(
         String(20), nullable=False, default=SessionStatus.active
     )

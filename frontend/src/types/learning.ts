@@ -187,6 +187,7 @@ export interface EvaluateRequest {
   mastery_score?: number
   prerequisite_topics?: Array<{ id: string; name: string; mastery: number }> | null
   answers: AnswerSubmission[]
+  session_id: string
 }
 
 export interface NextLessonInfo {

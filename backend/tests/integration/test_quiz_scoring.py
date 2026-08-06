@@ -96,7 +96,7 @@ class TestQuizEvaluationScoring:
             })
             assert r.status_code == 200, f"Evaluate failed: {r.text[:300]}"
             result = r.json()
-            print(f"Score: {result['score']:.0%} ({result['correct_count']}/{result['total_questions']})")
+            print(f"Score: {result['score']:.2f} ({result['correct_count']}/{result['total_questions']})")
 
             # THE KEY ASSERTION: correct_count is not always 0
             # (We pick the first option for every question, so at least

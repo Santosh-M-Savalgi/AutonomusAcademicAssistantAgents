@@ -293,7 +293,7 @@ async def evaluate_quiz(
         routing_reason = f"Score below 50% ({score:.0%}) — review recommended"
 
     return EvaluateResponse(
-        score=round(score, 4),
+        score=round(score * 100, 2),
         total_questions=evaluation.total_questions,
         correct_count=evaluation.correct_count,
         incorrect_count=evaluation.incorrect_count,

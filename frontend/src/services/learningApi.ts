@@ -55,6 +55,48 @@ interface LearningGoalResponse {
   roadmap_mode: string
 }
 
+const DEFAULT_LESSON_TIMEOUT_MS = 120_000
+
+function parseLessonTimeoutMs(rawValue: string | undefined): number {
+  if (!rawValue) return DEFAULT_LESSON_TIMEOUT_MS
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_LESSON_TIMEOUT_MS
+  return parsed
+}
+
+const LESSON_GENERATION_TIMEOUT_MS = parseLessonTimeoutMs(
+  import.meta.env.VITE_LESSON_GENERATION_TIMEOUT_MS
+)
+
+const inFlightLessonControllers = new Map<string, AbortController>()
+
+function lessonTopicKeyFromRequest(request: LessonRequest): string {
+  return request.topic_id || request.topic_name || '__unknown_topic__'
+}
+
+function prepareLessonRequestAbortController(request: LessonRequest): AbortController {
+  const topicKey = lessonTopicKeyFromRequest(request)
+  const priorController = inFlightLessonControllers.get(topicKey)
+  if (priorController) {
+    priorController.abort()
+  }
+
+  const controller = new AbortController()
+  inFlightLessonControllers.set(topicKey, controller)
+  return controller
+}
+
+function releaseLessonRequestAbortController(
+  request: LessonRequest,
+  controller: AbortController,
+): void {
+  const topicKey = lessonTopicKeyFromRequest(request)
+  const activeController = inFlightLessonControllers.get(topicKey)
+  if (activeController === controller) {
+    inFlightLessonControllers.delete(topicKey)
+  }
+}
+
 // ─── Dashboard Hooks ──────────────────────────────────────────
 
 export function useDashboard() {
@@ -135,11 +177,9 @@ export function useGenerateLesson(mutationKey?: string[]) {
   return useMutation({
     mutationKey,
     mutationFn: async (request: LessonRequest) => {
-      const { data } = await apiClient.post<Lesson>('/api/v2/lessons/lesson', request)
-      return data
+      return fetchLesson(request)
     },
-    retry: 2,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    retry: false,
   })
 }
 
@@ -160,8 +200,16 @@ export function useGenerateQuiz() {
 
 /** Raw API call for lesson generation. */
 export async function fetchLesson(request: LessonRequest): Promise<Lesson> {
-  const { data } = await apiClient.post<Lesson>('/api/v2/lessons/lesson', request)
-  return data
+  const controller = prepareLessonRequestAbortController(request)
+  try {
+    const { data } = await apiClient.post<Lesson>('/api/v2/lessons/lesson', request, {
+      signal: controller.signal,
+      timeout: LESSON_GENERATION_TIMEOUT_MS,
+    })
+    return data
+  } finally {
+    releaseLessonRequestAbortController(request, controller)
+  }
 }
 
 /** Query-key factory for lessons. */
@@ -185,34 +233,55 @@ export function useLesson(
 ) {
   const queryClient = useQueryClient()
   const key = lessonKeys.detail(topicId ?? '__none__')
+  const isEnabled = opts?.enabled ?? !!topicId
 
   const query = useQuery<Lesson>({
     queryKey: key,
-    queryFn: ({ signal }) => fetchLesson(request),
+    queryFn: () => fetchLesson(request),
     enabled: false, // never auto-fetch — we trigger via fetchQuery below
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    retry: 2,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    retry: false,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   })
+
+  const requestLesson = async () => {
+    if (!isEnabled) return
+
+    // If there's already an in-flight fetch for this query key, don't start another.
+    // This guards against StrictMode double-invocation and rapid user retries.
+    const alreadyFetching = queryClient.isFetching({ queryKey: key }) > 0
+    if (alreadyFetching) return
+
+    await queryClient.cancelQueries({ queryKey: key, exact: true })
+
+    // Re-check after cancel in case a fetch started concurrently.
+    if (queryClient.isFetching({ queryKey: key }) > 0) return
+
+    await queryClient.fetchQuery({
+      queryKey: key,
+      queryFn: () => fetchLesson(request),
+      staleTime: 10 * 60 * 1000,
+      retry: false,
+    })
+  }
 
   // Trigger fetch via fetchQuery — built-in dedup for same key.
   // Even if StrictMode double-fires this effect, fetchQuery will
   // find the first in-flight request and wait for it.
   useEffect(() => {
-    if (opts?.enabled ?? !!topicId) {
-      queryClient.fetchQuery({
-        queryKey: key,
-        queryFn: ({ signal }) => fetchLesson(request),
-        staleTime: 10 * 60 * 1000,
-      })
+    if (isEnabled) {
+      void requestLesson()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topicId])
 
-  return query
+  return {
+    ...query,
+    requestLesson,
+    isGeneratingLesson: query.isPending || query.isFetching,
+  }
 }
 
 // ─── Quiz Pre-generation (query-based, shared cache) ────────────

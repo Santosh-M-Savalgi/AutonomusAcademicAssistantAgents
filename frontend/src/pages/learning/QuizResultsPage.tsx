@@ -46,56 +46,6 @@ function getEncouragement(score: number): string {
   return 'Don\'t give up! Review the material and try again to improve your score.'
 }
 
-// ─── Donut Ring SVG Component ────────────────────────────────────
-
-interface DonutRingProps {
-  percentage: number
-  color: string
-  size?: number
-  strokeWidth?: number
-}
-
-function DonutRing({ percentage, color, size = 180, strokeWidth = 12 }: DonutRingProps) {
-  const radius = (size - strokeWidth) / 2
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference - (percentage / 100) * circumference
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
-      className="transform -rotate-90"
-      aria-hidden="true"
-    >
-      {/* Background ring */}
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke="currentColor"
-        className="text-surface-border"
-        strokeWidth={strokeWidth}
-      />
-      {/* Score ring */}
-      <motion.circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        initial={{ strokeDashoffset: circumference }}
-        animate={{ strokeDashoffset: offset }}
-        transition={{ duration: 1.2, ease: 'easeOut', delay: 0.3 }}
-      />
-    </svg>
-  )
-}
-
 // ─── Stat Card ───────────────────────────────────────────────────
 
 interface StatCardItemProps {
@@ -197,7 +147,7 @@ export function QuizResultsPage() {
     evaluateQuery.data
 
   const score = evaluation?.score ?? 0
-  const totalQuestions = evaluation?.total_questions ?? locationState?.totalQuestions ?? 0
+  const totalQuestionsFromEvaluation = evaluation?.total_questions ?? locationState?.totalQuestions ?? 0
   const correctCount = evaluation?.correct_count ?? 0
   const incorrectCount = evaluation?.incorrect_count ?? 0
   const weakConcepts = evaluation?.weak_concept_tags ?? []
@@ -207,10 +157,15 @@ export function QuizResultsPage() {
   const nextTopicId = evaluation?.next_topic_id
   const nextLesson = evaluation?.next_lesson
 
-  const scoreColor = getScoreColor(score)
-  const ringColor = getScoreRingColor(score)
-  const headingText = getScoreHeading(score)
-  const encouragement = getEncouragement(score)
+  const totalQuestions = Math.max(totalQuestionsFromEvaluation, answers?.length ?? 0)
+  const correctedScorePercent = totalQuestions > 0
+    ? (correctCount / totalQuestions) * 100
+    : score
+
+  const scoreColor = getScoreColor(correctedScorePercent)
+  const ringColor = getScoreRingColor(correctedScorePercent)
+  const headingText = getScoreHeading(correctedScorePercent)
+  const encouragement = getEncouragement(correctedScorePercent)
 
   // ── Animation variants ────────────────────────────────────────
 
@@ -323,25 +278,58 @@ export function QuizResultsPage() {
           animate="visible"
           aria-label="Score hero section"
         >
-          {/* Score ring */}
-          <div className="relative mb-6" aria-label={`Score: ${Math.round(score)}%`}>
-            <DonutRing percentage={score} color={ringColor} size={180} strokeWidth={14} />
-            <motion.div
-              className="absolute inset-0 flex items-center justify-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4, delay: 0.8 }}
-            >
-              <span
-                className={cn(
-                  'font-display text-4xl font-bold tabular-nums',
-                  scoreColor
-                )}
-              >
-                {Math.round(score)}%
-              </span>
-            </motion.div>
-          </div>
+          <motion.p
+            className="font-display text-5xl sm:text-6xl font-bold text-text-primary tabular-nums mb-2"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.35 }}
+          >
+            {correctCount}/{totalQuestions} Correct
+          </motion.p>
+
+          <motion.p
+            className={cn('text-base sm:text-lg font-semibold tabular-nums mb-4', scoreColor)}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, delay: 0.45 }}
+          >
+            {Math.round(correctedScorePercent)}%
+          </motion.p>
+
+          <motion.div
+            className="w-full max-w-md mb-6"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.55 }}
+            aria-label={`Question outcomes: ${correctCount} correct and ${incorrectCount} incorrect out of ${totalQuestions}`}
+          >
+            <div className="flex items-center gap-2">
+              {Array.from({ length: totalQuestions }).map((_, index) => {
+                const isCorrect = index < correctCount
+                return (
+                  <div
+                    key={index}
+                    className={cn(
+                      'h-8 flex-1 min-w-0 rounded-md border flex items-center justify-center',
+                      isCorrect ? 'text-white' : 'text-white',
+                    )}
+                    style={{
+                      backgroundColor: isCorrect ? ringColor : '#EF4444',
+                      borderColor: isCorrect ? ringColor : '#EF4444',
+                    }}
+                    aria-label={`Question ${index + 1}: ${isCorrect ? 'correct' : 'incorrect'}`}
+                    title={`Question ${index + 1}: ${isCorrect ? 'Correct' : 'Incorrect'}`}
+                  >
+                    {isCorrect ? (
+                      <CheckCircle className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <XCircle className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </motion.div>
 
           {/* Heading */}
           <motion.h1
@@ -392,7 +380,7 @@ export function QuizResultsPage() {
           />
           <StatCardItem
             label="Score"
-            value={`${Math.round(score)}%`}
+            value={`${Math.round(correctedScorePercent)}%`}
             icon={<Target className="h-5 w-5" />}
             variant="primary"
             delay={0.4}

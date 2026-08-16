@@ -15,6 +15,7 @@ Environment:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -102,12 +103,16 @@ class DeepSeekProvider(BaseProvider):
         *,
         system_prompt: str | None = None,
         temperature: float | None = None,
-        max_tokens: int | None = None
+        max_tokens: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> ProviderResponse:
         """Send a chat completion request to DeepSeek."""
         client = await self._get_client()
         temp = temperature if temperature is not None else self.config.temperature
         tokens = max_tokens if max_tokens is not None else self.config.max_tokens
+        request_timeout_seconds = (
+            timeout_seconds if timeout_seconds is not None else self.config.timeout_seconds
+        )
         max_attempts = self.config.retry_count + 1
 
         messages: list[dict[str, str]] = []
@@ -128,6 +133,7 @@ class DeepSeekProvider(BaseProvider):
                 response = await client.post(
                     "/chat/completions",
                     json=payload,
+                    timeout=httpx.Timeout(request_timeout_seconds),
                 )
 
                 if response.status_code == 401:
@@ -168,17 +174,34 @@ class DeepSeekProvider(BaseProvider):
             except (ProviderError, ProviderTimeoutError, ProviderRateLimitError):
                 raise
             except httpx.TimeoutException as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    delay = 2 ** attempt
+                    LOGGER.warning(
+                        "DeepSeek attempt %d/%d timed out after %.1fs, retrying in %ds",
+                        attempt, max_attempts, request_timeout_seconds, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
                 raise ProviderTimeoutError(
                     provider=self.provider_name,
-                    timeout_seconds=self.config.timeout_seconds,
+                    timeout_seconds=request_timeout_seconds,
                 ) from exc
             except Exception as exc:
                 last_exc = exc
                 exc_str = str(exc).lower()
                 if "timeout" in exc_str or "timed out" in exc_str:
+                    if attempt < max_attempts:
+                        delay = 2 ** attempt
+                        LOGGER.warning(
+                            "DeepSeek attempt %d/%d timed out, retrying in %ds: %s",
+                            attempt, max_attempts, delay, exc,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
                     raise ProviderTimeoutError(
                         provider=self.provider_name,
-                        timeout_seconds=self.config.timeout_seconds,
+                        timeout_seconds=request_timeout_seconds,
                     ) from exc
                 if "429" in exc_str or "rate" in exc_str:
                     raise ProviderRateLimitError(provider=self.provider_name) from exc
@@ -189,7 +212,6 @@ class DeepSeekProvider(BaseProvider):
                         "DeepSeek attempt %d/%d failed, retrying in %ds: %s",
                         attempt, max_attempts, delay, exc,
                     )
-                    import asyncio
                     await asyncio.sleep(delay)
                 else:
                     LOGGER.error(

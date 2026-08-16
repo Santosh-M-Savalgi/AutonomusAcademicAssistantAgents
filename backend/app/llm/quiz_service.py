@@ -88,6 +88,8 @@ Respond ONLY with valid JSON matching this structure:
   ]
 }"""
 
+QUIZ_GENERATION_TIMEOUT_SECONDS = 60.0
+
 
 def _build_quiz_prompt(
     topic_name: str,
@@ -182,6 +184,7 @@ class QuizService:
             prompt,
             system_prompt=QUIZ_SYSTEM_PROMPT,
             temperature=0.4,
+            timeout_seconds=QUIZ_GENERATION_TIMEOUT_SECONDS,
         )
 
         return self._parse_quiz_response(response.content, topic_name)

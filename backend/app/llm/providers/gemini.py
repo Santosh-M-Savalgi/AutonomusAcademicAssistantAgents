@@ -72,7 +72,8 @@ class GeminiProvider(BaseProvider):
         *,
         system_prompt: str | None = None,
         temperature: float | None = None,
-        max_tokens: int | None = None
+        max_tokens: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> ProviderResponse:
         client = self._lazy_client()
         temp = temperature if temperature is not None else self.config.temperature

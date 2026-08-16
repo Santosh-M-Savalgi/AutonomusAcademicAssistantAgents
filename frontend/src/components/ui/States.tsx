@@ -37,6 +37,9 @@ interface ErrorStateProps {
   title?: string
   message?: string
   onRetry?: () => void
+  retryLabel?: string
+  retryDisabled?: boolean
+  retryLoading?: boolean
   className?: string
 }
 
@@ -44,6 +47,9 @@ export function ErrorState({
   title = 'Something went wrong',
   message = 'An unexpected error occurred. Please try again.',
   onRetry,
+  retryLabel = 'Try again',
+  retryDisabled = false,
+  retryLoading = false,
   className,
 }: ErrorStateProps) {
   return (
@@ -59,9 +65,10 @@ export function ErrorState({
       {onRetry && (
         <button
           onClick={onRetry}
-          className="px-4 py-2 text-sm font-medium text-primary hover:text-primary-hover bg-primary-muted rounded-md transition-colors"
+          disabled={retryDisabled || retryLoading}
+          className="px-4 py-2 text-sm font-medium text-primary hover:text-primary-hover bg-primary-muted rounded-md transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          Try again
+          {retryLoading ? 'Retrying...' : retryLabel}
         </button>
       )}
     </div>

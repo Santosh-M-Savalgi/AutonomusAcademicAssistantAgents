@@ -12,7 +12,13 @@ import json
 import pytest
 
 from app.llm.providers.mock import MockProvider
-from app.llm.quiz_service import Quiz, QuizQuestion, QuizService, _build_quiz_prompt
+from app.llm.quiz_service import (
+    QUIZ_GENERATION_TIMEOUT_SECONDS,
+    Quiz,
+    QuizQuestion,
+    QuizService,
+    _build_quiz_prompt,
+)
 
 
 class TestQuizPrompt:
@@ -98,6 +104,42 @@ class TestQuizService:
         )
 
         assert quiz.total_questions > 0
+
+    @pytest.mark.asyncio
+    async def test_generate_quiz_uses_longer_timeout_override(self) -> None:
+        class _SpyMockProvider(MockProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.timeout_seconds_seen: float | None = None
+
+            async def generate(
+                self,
+                prompt: str,
+                *,
+                system_prompt: str | None = None,
+                temperature: float | None = None,
+                max_tokens: int | None = None,
+                timeout_seconds: float | None = None,
+            ):
+                self.timeout_seconds_seen = timeout_seconds
+                return await super().generate(
+                    prompt,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout_seconds=timeout_seconds,
+                )
+
+        provider = _SpyMockProvider()
+        provider.add_quiz_rule("Python")
+        service = QuizService(provider=provider)
+
+        await service.generate_quiz(
+            topic_name="Python",
+            topic_description="Programming language",
+        )
+
+        assert provider.timeout_seconds_seen == QUIZ_GENERATION_TIMEOUT_SECONDS
 
     @pytest.mark.asyncio
     async def test_parse_quiz_response_valid(self, service: QuizService) -> None:

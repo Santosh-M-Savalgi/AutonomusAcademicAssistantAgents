@@ -92,6 +92,7 @@ class BaseProvider(ABC):
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> ProviderResponse:
         """Send a prompt to the LLM and return the normalized response.
 
@@ -100,6 +101,7 @@ class BaseProvider(ABC):
             system_prompt: Optional system-level instruction.
             temperature: Override for generation temperature.
             max_tokens: Override for max output tokens.
+            timeout_seconds: Optional per-call timeout override.
 
         Returns:
             A ``ProviderResponse`` with the generated content.

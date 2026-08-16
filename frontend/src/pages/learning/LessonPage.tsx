@@ -163,6 +163,19 @@ function LessonSkeleton() {
   )
 }
 
+function LessonGeneratingState() {
+  return (
+    <div className="min-h-screen">
+      <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-4xl mx-auto">
+        <LoadingState
+          message="Generating your lesson... this can take up to a minute while we gather content, draft explanations, and prepare a quiz."
+          className="py-24"
+        />
+      </div>
+    </div>
+  )
+}
+
 function LessonHeader({
   lesson,
 }: {
@@ -541,6 +554,7 @@ export function LessonPage() {
   const isLoading = lessonQuery.isLoading
   const isError = lessonQuery.isError
   const error = lessonQuery.error
+  const isGeneratingLesson = lessonQuery.isGeneratingLesson
 
   // Track which cards the user has scrolled past (counts as "viewed")
   useEffect(() => {
@@ -603,11 +617,15 @@ export function LessonPage() {
   }
 
   const handleRetry = () => {
-    lessonQuery.refetch()
+    if (isGeneratingLesson) return
+    void lessonQuery.requestLesson()
   }
 
   // ── Loading state ──────────────────────────────────────────
-  if (isLoading) {
+  if (isLoading || isGeneratingLesson) {
+    if (isGeneratingLesson) {
+      return <LessonGeneratingState />
+    }
     return <LessonSkeleton />
   }
 
@@ -622,7 +640,10 @@ export function LessonPage() {
               ? error.message
               : 'Unable to generate the lesson content. Please check your connection and try again.'
           }
-          onRetry={handleRetry}
+          onRetry={isGeneratingLesson ? undefined : handleRetry}
+          retryLabel={isGeneratingLesson ? 'Generating lesson...' : 'Try again'}
+          retryLoading={isGeneratingLesson}
+          retryDisabled={isGeneratingLesson}
         />
       </div>
     )

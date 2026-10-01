@@ -1,0 +1,50 @@
+[importlinter]
+root_packages =
+    packages
+    apps
+
+[importlinter:contract:domain-boundary]
+name = Domain does not depend on other internal packages
+type = forbidden
+source_modules =
+    packages.domain
+forbidden_modules =
+    packages.mastery
+    packages.planner
+    packages.curriculum
+    packages.retrieval
+    packages.agents
+    packages.model_client
+    packages.persistence
+    packages.evalkit
+
+[importlinter:contract:mastery-boundary]
+name = Mastery may depend only on domain
+type = layers
+layers =
+    packages.mastery
+    packages.domain
+
+[importlinter:contract:planner-boundary]
+name = Planner may depend only on domain
+type = layers
+layers =
+    packages.planner
+    packages.domain
+
+[importlinter:contract:api-boundary]
+name = API does not depend on agents or model clients
+type = forbidden
+source_modules =
+    apps.api
+forbidden_modules =
+    packages.agents
+    packages.model_client
+
+[importlinter:contract:agent-boundary]
+name = Agents do not depend on persistence
+type = forbidden
+source_modules =
+    packages.agents
+forbidden_modules =
+    packages.persistence

@@ -1,76 +1,90 @@
-services:
-  backend:
-    build:
-      context: ./backend
-    ports:
-      - "8000:8000"
-    env_file:
-      - ./backend/.env
-    environment:
-      APP_ENV: development
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
-      JWT_SECRET_KEY: "dev-jwt-secret-not-for-production"
-      POSTGRES_DSN: postgresql+asyncpg://aaa:aaa_password@postgres:5432/aaa
-      REDIS_URL: redis://redis:6379/0
-      CHROMA_HOST: chroma
-      CHROMA_PORT: 8000
-      OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      OBJECT_STORAGE_HEALTH_PATH: /minio/health/ready
+name: aaa-v3
 
+services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
+    profiles: [mock, cpu, gpu]
     environment:
       POSTGRES_DB: aaa
       POSTGRES_USER: aaa
-      POSTGRES_PASSWORD: "aaa_password"
+      POSTGRES_PASSWORD: aaa
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aaa -d aaa"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    profiles: [mock, cpu, gpu]
+    command: ["redis-server", "--appendonly", "no"]
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  chroma:
-    image: chromadb/chroma:latest
-    ports:
-      - "8001:8000"
-    volumes:
-      - chroma_data:/chroma/chroma
-    environment:
-      IS_PERSISTENT: "TRUE"
-      PERSIST_DIRECTORY: /chroma/chroma
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: minio/minio:latest
+    profiles: [mock, cpu, gpu]
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: aaa_minio
-      MINIO_ROOT_PASSWORD: "minio_dev_password_123"
+      MINIO_ROOT_USER: aaa-minio
+      MINIO_ROOT_PASSWORD: aaa-minio-secret
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    profiles: [mock, cpu, gpu]
+    environment:
+      APP_ENV: development
+      AAA_PROFILE: ${AAA_PROFILE:-mock}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://aaa:aaa@postgres:5432/aaa
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: aaa-minio
+      MINIO_SECRET_KEY: aaa-minio-secret
+      MINIO_BUCKET: aaa
+      MINIO_SECURE: "false"
+      HEALTHCHECK_TIMEOUT_SECONDS: "2.0"
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-compose-only-secret}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:
   redis_data:
-  chroma_data:
   minio_data:

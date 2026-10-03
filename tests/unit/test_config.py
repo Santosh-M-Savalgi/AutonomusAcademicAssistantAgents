@@ -1,6 +1,7 @@
-"""Configuration loading tests for Sprint 1.1."""
+"""Environment-backed configuration loading tests."""
 
-from pydantic import SecretStr
+import pytest
+from pydantic import SecretStr, ValidationError
 
 from apps.api.config import Settings
 
@@ -31,3 +32,33 @@ def test_settings_have_safe_local_defaults() -> None:
     assert settings.database_url.startswith("postgresql+asyncpg://")
     assert settings.minio_secure is False
     assert settings.app_secret_key.get_secret_value() == "local-development-only"
+
+
+def test_authentication_settings_load_from_environment(monkeypatch) -> None:
+    secret = "environment-only-jwt-signing-key-long-enough"
+    monkeypatch.setenv("JWT_SECRET_KEY", secret)
+    monkeypatch.setenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "20")
+    monkeypatch.setenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "4")
+    monkeypatch.setenv("JWT_ISSUER", "aaa-test-issuer")
+    monkeypatch.setenv("ARGON2_TIME_COST", "2")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.jwt_secret_key == SecretStr(secret)
+    assert settings.jwt_access_token_expire_minutes == 20
+    assert settings.jwt_refresh_token_expire_days == 4
+    assert settings.jwt_issuer == "aaa-test-issuer"
+    assert settings.argon2_time_cost == 2
+    assert secret not in repr(settings)
+
+
+def test_authentication_settings_reject_unsafe_parameters(monkeypatch) -> None:
+    for algorithm in ("none", "HS512"):
+        monkeypatch.setenv("JWT_ALGORITHM", algorithm)
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)
+
+    monkeypatch.delenv("JWT_ALGORITHM")
+    monkeypatch.setenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

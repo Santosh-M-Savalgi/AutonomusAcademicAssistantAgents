@@ -1,0 +1,81 @@
+name: AAA v3 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aaa-v3-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gates (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.11.15
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      - name: Ruff
+        run: uv run --locked --group dev ruff check .
+
+      - name: Strict Mypy
+        run: uv run --locked --group dev mypy --strict packages
+
+      - name: Import architecture contracts
+        run: uv run --locked --group dev lint-imports
+
+      - name: Unit tests (no services)
+        run: make unit
+
+  service-integration:
+    name: Isolated service integration (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.11.15
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      - name: Integration tests (fixture-owned disposable Docker services)
+        run: make integration

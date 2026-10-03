@@ -19,14 +19,29 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     settings: Settings = application.state.settings
     configure_logging(settings.log_level)
-    resources: RuntimeResources = create_runtime_resources(settings)
+    logger = structlog.get_logger("aaa.api")
+    logger.info("api_starting", app_env=settings.app_env)
+    try:
+        resources: RuntimeResources = create_runtime_resources(settings)
+    except Exception as error:
+        logger.error("api_startup_failed", error_type=type(error).__name__)
+        raise
     application.state.runtime = resources
-    structlog.get_logger("aaa.api").info("api_started", app_env=settings.app_env)
+    logger.info(
+        "api_started",
+        app_env=settings.app_env,
+        dependencies=["postgresql", "redis", "minio"],
+    )
     try:
         yield
     finally:
-        await resources.close()
-        structlog.get_logger("aaa.api").info("api_stopped")
+        logger.info("api_stopping")
+        try:
+            await resources.close()
+        except Exception as error:
+            logger.error("api_shutdown_failed", error_type=type(error).__name__)
+            raise
+        logger.info("api_stopped")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

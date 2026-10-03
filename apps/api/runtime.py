@@ -1,5 +1,6 @@
 """Runtime resource assembly for the API process."""
 
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 
 from apps.api.config import Settings
@@ -17,9 +18,10 @@ class RuntimeResources:
     async def close(self) -> None:
         """Close resources in reverse ownership order."""
 
-        await self.object_storage.close()
-        await self.redis.close()
-        await self.database.close()
+        async with AsyncExitStack() as stack:
+            stack.push_async_callback(self.database.close)
+            stack.push_async_callback(self.redis.close)
+            stack.push_async_callback(self.object_storage.close)
 
 
 def create_runtime_resources(settings: Settings) -> RuntimeResources:

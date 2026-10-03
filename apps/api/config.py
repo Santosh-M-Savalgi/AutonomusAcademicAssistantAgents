@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     app_name: str = Field(default="AAA v3 API", validation_alias=AliasChoices("APP_NAME"))
@@ -28,6 +29,25 @@ class Settings(BaseSettings):
         default=SecretStr("local-development-only"),
         validation_alias=AliasChoices("APP_SECRET_KEY", "SECRET_KEY"),
     )
+    jwt_secret_key: SecretStr | None = Field(default=None, validation_alias="JWT_SECRET_KEY")
+    jwt_algorithm: Literal["HS256"] = Field(
+        default="HS256", validation_alias="JWT_ALGORITHM"
+    )
+    jwt_issuer: str = Field(default="aaa-v3", min_length=1, validation_alias="JWT_ISSUER")
+    jwt_audience: str = Field(default="aaa-v3-api", min_length=1, validation_alias="JWT_AUDIENCE")
+    jwt_access_token_expire_minutes: int = Field(
+        default=15, ge=1, le=1440, validation_alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"
+    )
+    jwt_refresh_token_expire_days: int = Field(
+        default=7, ge=1, le=30, validation_alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS"
+    )
+    argon2_time_cost: int = Field(default=3, ge=2, le=10, validation_alias="ARGON2_TIME_COST")
+    argon2_memory_cost: int = Field(
+        default=65536, ge=19456, le=262144, validation_alias="ARGON2_MEMORY_COST"
+    )
+    argon2_parallelism: int = Field(default=4, ge=1, le=16, validation_alias="ARGON2_PARALLELISM")
+    argon2_hash_length: int = Field(default=32, ge=16, le=64, validation_alias="ARGON2_HASH_LENGTH")
+    argon2_salt_length: int = Field(default=16, ge=16, le=64, validation_alias="ARGON2_SALT_LENGTH")
     api_host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("API_HOST"))
     api_port: int = Field(default=8000, ge=1, le=65535, validation_alias=AliasChoices("API_PORT"))
     log_level: str = Field(default="INFO", validation_alias=AliasChoices("LOG_LEVEL"))

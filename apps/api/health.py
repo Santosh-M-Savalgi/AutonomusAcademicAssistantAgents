@@ -4,10 +4,12 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["health"])
+logger = structlog.get_logger("aaa.health")
 
 
 async def _run_probe(
@@ -18,7 +20,13 @@ async def _run_probe(
     try:
         await asyncio.wait_for(probe(), timeout=timeout_seconds)
     except Exception as error:
+        logger.warning(
+            "dependency_unavailable",
+            dependency=name,
+            error_type=type(error).__name__,
+        )
         return name, {"status": "unavailable", "error": type(error).__name__}
+    logger.info("dependency_available", dependency=name)
     return name, {"status": "ok"}
 
 
@@ -35,6 +43,7 @@ async def readyz(request: Request) -> JSONResponse:
 
     resources: Any = getattr(request.app.state, "runtime", None)
     if resources is None:
+        logger.warning("readiness_unavailable", reason="runtime_resources_missing")
         return JSONResponse(
             status_code=503,
             content={"status": "unavailable", "dependencies": {"runtime": {"status": "missing"}}},

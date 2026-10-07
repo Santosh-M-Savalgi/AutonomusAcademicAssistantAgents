@@ -1,1 +1,67 @@
-"""Pure mastery package scaffold; implementation begins in Phase 3."""
+"""Pure Sprint 3.4 mastery engine."""
+
+from packages.mastery.engine import (
+    PRIOR_ALPHA,
+    PRIOR_BETA,
+    REVIEW_LADDER_DAYS,
+    apply_evidence,
+    classify_status,
+    confidence_value,
+    decay_state,
+    effective_sample_size,
+    forgetting_half_life,
+    initial_state,
+    mastery_value,
+    metrics_for,
+    replay,
+)
+from packages.mastery.scheduling import (
+    REVIEW_POLICY_VERSION,
+    REVIEW_THRESHOLD_DEFAULT,
+    recompute_after_success,
+    refresh_projection_metadata,
+    review_due_idempotency_key,
+    schedule_cycle,
+    schedule_cycle_material,
+    seed_initial_schedule,
+    seed_low_mastery_schedule,
+    select_review_candidates,
+)
+from packages.mastery.weights import (
+    calculate_weight_snapshot,
+    correct_difficulty_weight,
+    correct_hint_factor,
+    incorrect_difficulty_weight,
+    type_weight,
+)
+
+__all__ = [
+    "PRIOR_ALPHA",
+    "PRIOR_BETA",
+    "REVIEW_LADDER_DAYS",
+    "REVIEW_POLICY_VERSION",
+    "REVIEW_THRESHOLD_DEFAULT",
+    "apply_evidence",
+    "calculate_weight_snapshot",
+    "classify_status",
+    "confidence_value",
+    "correct_difficulty_weight",
+    "correct_hint_factor",
+    "decay_state",
+    "effective_sample_size",
+    "forgetting_half_life",
+    "incorrect_difficulty_weight",
+    "initial_state",
+    "mastery_value",
+    "metrics_for",
+    "replay",
+    "recompute_after_success",
+    "refresh_projection_metadata",
+    "review_due_idempotency_key",
+    "schedule_cycle",
+    "schedule_cycle_material",
+    "seed_initial_schedule",
+    "seed_low_mastery_schedule",
+    "select_review_candidates",
+    "type_weight",
+]

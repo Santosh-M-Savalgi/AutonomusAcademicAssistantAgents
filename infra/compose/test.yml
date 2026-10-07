@@ -1,5 +1,22 @@
 # Standalone test stack: never merge with the persistent development stack.
 services:
+  # Opt-in process smoke tests; ordinary pytest starts only dependency services.
+  worker:
+    extends:
+      file: ../../docker-compose.yml
+      service: worker
+    profiles: [worker]
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://aaa_test:aaa_test@postgres:5432/aaa_test
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ACCESS_KEY: aaa-test-minio
+      MINIO_SECRET_KEY: aaa-test-minio-secret
+      MINIO_BUCKET: aaa-test
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:

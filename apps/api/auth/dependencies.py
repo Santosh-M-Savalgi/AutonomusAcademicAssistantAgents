@@ -9,6 +9,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from apps.api.auth.jwt import InvalidTokenError, JWTConfigurationError, JWTService
 from apps.api.auth.schemas import AuthenticatedIdentity
 from apps.api.config import Settings, get_settings
+from packages.domain.identity import StudentIdentity
+from packages.persistence.identities import resolve_student_identity
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 logger = structlog.get_logger("aaa.auth")
@@ -52,3 +54,27 @@ async def get_current_identity(
         raise _authentication_error("Invalid or expired token") from None
 
     return AuthenticatedIdentity.from_claims(claims)
+
+
+def identity_provider_namespace(settings: Settings) -> str:
+    """Namespace subject mappings by the configured JWT issuer and audience."""
+
+    return f"jwt:{settings.jwt_issuer}:{settings.jwt_audience}"
+
+
+async def get_current_student_identity(
+    request: Request,
+    identity: Annotated[AuthenticatedIdentity, Depends(get_current_identity)],
+) -> StudentIdentity:
+    """Resolve the authenticated subject without accepting a client UUID."""
+
+    settings = getattr(request.app.state, "settings", None)
+    if not isinstance(settings, Settings):
+        settings = get_settings()
+    resources = request.app.state.runtime
+    async with resources.database.session() as session, session.begin():
+        return await resolve_student_identity(
+            session,
+            identity_provider_namespace(settings),
+            identity.subject,
+        )

@@ -2,6 +2,7 @@
 root_packages =
     packages
     apps
+include_external_packages = true
 
 [importlinter:contract:domain-boundary]
 name = Domain does not depend on other internal packages
@@ -41,6 +42,38 @@ forbidden_modules =
     packages.agents
     packages.model_client
 
+[importlinter:contract:planner-purity]
+name = Planner has no infrastructure, environment, clock, graph or mastery dependencies
+type = forbidden
+source_modules =
+    packages.planner
+forbidden_modules =
+    apps
+    packages.persistence
+    packages.mastery
+    packages.curriculum
+    packages.agents
+    packages.model_client
+    packages.retrieval
+    packages.evalkit
+    asyncio
+    datetime
+    fastapi
+    httpx
+    minio
+    os
+    pathlib
+    random
+    redis
+    requests
+    secrets
+    socket
+    sqlalchemy
+    subprocess
+    time
+    urllib
+allow_indirect_imports = true
+
 [importlinter:contract:agent-boundary]
 name = Agents do not depend on persistence
 type = forbidden
@@ -48,3 +81,45 @@ source_modules =
     packages.agents
 forbidden_modules =
     packages.persistence
+
+[importlinter:contract:graph-purity]
+name = Graph algorithms do not depend on I/O, framework, clock or network modules
+type = forbidden
+source_modules =
+    packages.curriculum.graph
+    packages.curriculum.templates
+    packages.domain.graph
+forbidden_modules =
+    apps
+    packages.persistence
+    packages.agents
+    packages.model_client
+    packages.mastery
+    packages.planner
+    packages.evalkit
+    packages.retrieval
+    packages.curriculum.config
+    packages.curriculum.pdf
+    packages.curriculum.drafts
+    packages.curriculum.structure
+    aiohttp
+    asyncio
+    datetime
+    fastapi
+    http
+    httpx
+    minio
+    os
+    pathlib
+    random
+    redis
+    requests
+    secrets
+    socket
+    sqlalchemy
+    subprocess
+    time
+    urllib
+    urllib3
+ignore_imports =
+    packages.domain.models -> datetime

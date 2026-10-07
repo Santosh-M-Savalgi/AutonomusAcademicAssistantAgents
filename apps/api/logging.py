@@ -43,6 +43,7 @@ _OPERATIONAL_FIELDS = frozenset(
         "event", "logger", "level", "timestamp", "request_id", "service",
         "method", "route", "status_code", "duration_ms", "error_type",
         "dependency", "dependencies", "reason", "app_env",
+        "job_id", "worker_id",
     }
 )
 
@@ -104,7 +105,7 @@ def redact_sensitive_fields(_: Any, __: str, event_dict: EventDict) -> EventDict
     event = event_dict.get("event")
     if not isinstance(event, str) or not _EVENT_NAME.fullmatch(event):
         event_dict["event"] = "log_message"
-    event_dict["service"] = "aaa-api"
+    event_dict.setdefault("service", "aaa-api")
     return {
         key: _redact_value(key, value) if key in _OPERATIONAL_FIELDS else _REDACTED
         for key, value in event_dict.items()
@@ -123,7 +124,7 @@ def _processors() -> list[Processor]:
     ]
 
 
-def configure_logging(log_level: str) -> None:
+def configure_logging(log_level: str, *, service: str = "aaa-api") -> None:
     """Configure JSON logs for both application and standard-library loggers.
 
     Request bodies, credentials, tokens, password material, and database
@@ -146,6 +147,7 @@ def configure_logging(log_level: str) -> None:
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
     root_logger.setLevel(level)
+    structlog.contextvars.bind_contextvars(service=service)
     # Uvicorn otherwise owns plaintext handlers, including raw URL access logs.
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(name)

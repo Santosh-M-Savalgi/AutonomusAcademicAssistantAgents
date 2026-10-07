@@ -60,7 +60,8 @@ services:
       retries: 15
 
   api:
-    build:
+    image: aaa-v3-api
+    build: &application_build
       context: .
       dockerfile: infra/docker/api.Dockerfile
     profiles: [mock, cpu, gpu]
@@ -76,6 +77,9 @@ services:
       MINIO_BUCKET: aaa
       MINIO_SECURE: "false"
       HEALTHCHECK_TIMEOUT_SECONDS: "2.0"
+      MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-20971520}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
+      UPLOAD_CHUNK_SIZE_BYTES: ${UPLOAD_CHUNK_SIZE_BYTES:-1048576}
       APP_SECRET_KEY: ${APP_SECRET_KEY:-local-compose-only-secret}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
@@ -103,6 +107,51 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  worker:
+    image: aaa-v3-api
+    build: *application_build
+    profiles: [mock, cpu, gpu]
+    command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker"]
+    stop_grace_period: 45s
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://aaa:aaa@postgres:5432/aaa
+      REDIS_URL: redis://redis:6379/0
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+      WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-15}
+      WORKER_REAPER_SECONDS: ${WORKER_REAPER_SECONDS:-15}
+      WORKER_RETRY_BASE_SECONDS: ${WORKER_RETRY_BASE_SECONDS:-2}
+      WORKER_RETRY_MAX_SECONDS: ${WORKER_RETRY_MAX_SECONDS:-300}
+      WORKER_SHUTDOWN_GRACE_SECONDS: ${WORKER_SHUTDOWN_GRACE_SECONDS:-30}
+      WORKER_IO_TIMEOUT_SECONDS: ${WORKER_IO_TIMEOUT_SECONDS:-5}
+      WORKER_LANES: ${WORKER_LANES:-["interactive","prefetch","batch"]}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: aaa-minio
+      MINIO_SECRET_KEY: aaa-minio-secret
+      MINIO_BUCKET: aaa
+      MINIO_SECURE: "false"
+      MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-20971520}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
+      EXTRACTION_TIMEOUT_SECONDS: ${EXTRACTION_TIMEOUT_SECONDS:-60}
+      EXTRACTION_MAX_OUTPUT_BYTES: ${EXTRACTION_MAX_OUTPUT_BYTES:-4194304}
+      EXTRACTION_MEMORY_MB: ${EXTRACTION_MEMORY_MB:-512}
+      EXTRACTION_MINIMUM_USEFUL_CHARACTERS: ${EXTRACTION_MINIMUM_USEFUL_CHARACTERS:-40}
+      DRAFT_TIMEOUT_SECONDS: ${DRAFT_TIMEOUT_SECONDS:-30}
+      DRAFT_ARTIFACT_MAX_BYTES: ${DRAFT_ARTIFACT_MAX_BYTES:-4194304}
+      DRAFT_MAX_SECTIONS: ${DRAFT_MAX_SECTIONS:-128}
+      DRAFT_UNIT_OUTPUT_MAX_BYTES: ${DRAFT_UNIT_OUTPUT_MAX_BYTES:-65536}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio_probe:
+        condition: service_healthy
 
 volumes:
   postgres_data:

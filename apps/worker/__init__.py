@@ -1,1 +1,1 @@
-"""Worker service scaffold; implementation begins in Phase 1."""
+"""Durable PostgreSQL worker infrastructure; handlers are registered explicitly."""

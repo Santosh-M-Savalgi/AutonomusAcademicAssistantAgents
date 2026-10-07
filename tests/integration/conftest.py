@@ -65,7 +65,8 @@ def service_ports() -> Iterator[dict[str, int]]:
             for service, port in (("postgres", 5432), ("redis", 6379), ("minio", 9000))
         }
     finally:
-        run("down", "--volumes", "--remove-orphans", timeout=60)
+        # All dependency data is tmpfs; container cleanup needs no volume deletion.
+        run("down", "--remove-orphans", timeout=60)
 
 
 @pytest.fixture
@@ -93,6 +94,15 @@ async def service_settings(
                     "minio_secure": False,
                 })
             finally:
+                # A subprocess or independently-created runtime engine can
+                # outlive its owning fixture by one event-loop turn. Terminate
+                # only sessions connected to this disposable database before
+                # dropping it; never touch the shared development database.
+                await connection.execute(text(
+                    "SELECT pg_terminate_backend(pid) "
+                    "FROM pg_stat_activity "
+                    "WHERE datname = :database_name AND pid <> pg_backend_pid()",
+                ), {"database_name": database_name})
                 await connection.execute(text(f'DROP DATABASE "{database_name}"'))
     finally:
         await admin.close()

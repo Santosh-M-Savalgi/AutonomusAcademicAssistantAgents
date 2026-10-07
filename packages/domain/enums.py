@@ -36,6 +36,33 @@ class ReasonCode(StrEnum):
     RETRIEVAL_INSUFFICIENT = "RETRIEVAL_INSUFFICIENT"
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
     FRAME_COMPLETE = "FRAME_COMPLETE"
+    USER_PAUSED = "USER_PAUSED"
+    SESSION_COMPLETE = "SESSION_COMPLETE"
+    STATE_MISSING = "STATE_MISSING"
+    STATE_STALE = "STATE_STALE"
+    TOPIC_NOT_TAUGHT = "TOPIC_NOT_TAUGHT"
+    CHECK_REQUIRED = "CHECK_REQUIRED"
+    QUIZ_REQUIRED = "QUIZ_REQUIRED"
+    DIAGNOSTIC_PENDING = "DIAGNOSTIC_PENDING"
+
+
+class PlannerRule(StrEnum):
+    """Stable first-match rule identity for deterministic decision auditing."""
+
+    HARD_STOP = "HARD_STOP"
+    REQUIRED_STATE = "REQUIRED_STATE"
+    DIRECTIVE = "DIRECTIVE"
+    REVIEW = "REVIEW"
+    REMEDIATION_CONTINUE = "REMEDIATION_CONTINUE"
+    REMEDIATION_RETURN = "REMEDIATION_RETURN"
+    ASSESSMENT_FAILURE = "ASSESSMENT_FAILURE"
+    PREREQUISITE_GATE = "PREREQUISITE_GATE"
+    TOPIC_TEACH = "TOPIC_TEACH"
+    TOPIC_CHECK = "TOPIC_CHECK"
+    TOPIC_QUIZ = "TOPIC_QUIZ"
+    GATE_ADVANCE = "GATE_ADVANCE"
+    DIAGNOSTIC = "DIAGNOSTIC"
+    NEEDS_STATE = "NEEDS_STATE"
 
 
 class LearningEventType(StrEnum):
@@ -62,3 +89,34 @@ class LearningEventType(StrEnum):
     REVIEW_DUE = "REVIEW_DUE"
     JOB_FAILED = "JOB_FAILED"
     MODEL_FALLBACK_USED = "MODEL_FALLBACK_USED"
+    PREREQUISITE_EDGE_CONFIRMED = "PREREQUISITE_EDGE_CONFIRMED"
+    PREREQUISITE_EDGE_REJECTED = "PREREQUISITE_EDGE_REJECTED"
+    CURRICULUM_SUCCESSOR_CREATED = "CURRICULUM_SUCCESSOR_CREATED"
+
+
+class JobStatus(StrEnum):
+    """Lifecycle states for durable PostgreSQL-backed jobs."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    PARTIAL = "PARTIAL"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    RETRYING = "RETRYING"
+
+
+class JobLane(StrEnum):
+    """Scheduling lanes reserved for later worker prioritization."""
+
+    INTERACTIVE = "interactive"
+    PREFETCH = "prefetch"
+    BATCH = "batch"
+
+
+class JobType(StrEnum):
+    """Phase 2 job types admitted by the API foundation."""
+
+    SYLLABUS_INGESTION = "syllabus_ingestion"
+    CURRICULUM_DRAFT = "curriculum_draft"
+    GRAPH_BUILD = "graph_build"

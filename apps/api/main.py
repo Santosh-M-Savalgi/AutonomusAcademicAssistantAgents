@@ -7,7 +7,11 @@ import structlog
 from fastapi import FastAPI
 
 from apps.api.config import Settings, get_settings
+from apps.api.curriculum import router as curriculum_router
+from apps.api.documents.router import router as documents_router
+from apps.api.graphs import router as graphs_router
 from apps.api.health import router as health_router
+from apps.api.jobs import router as jobs_router
 from apps.api.logging import configure_logging
 from apps.api.middleware import RequestIDMiddleware
 from apps.api.runtime import RuntimeResources, create_runtime_resources
@@ -52,6 +56,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.settings = resolved_settings
     application.add_middleware(RequestIDMiddleware)
     application.include_router(health_router)
+    application.include_router(jobs_router)
+    application.include_router(documents_router)
+    application.include_router(curriculum_router)
+    application.include_router(graphs_router)
     return application
 
 

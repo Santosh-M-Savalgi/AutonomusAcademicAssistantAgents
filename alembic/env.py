@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from apps.api.config import get_settings
+from packages.persistence import models as _persistence_models  # noqa: F401
+from packages.persistence import runtime_models as _runtime_models  # noqa: F401
+from packages.persistence import runtime_support_models as _runtime_support_models  # noqa: F401
 from packages.persistence.database import Base
 
 config = context.config

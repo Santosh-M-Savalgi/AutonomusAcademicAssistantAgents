@@ -76,6 +76,24 @@ class Settings(BaseSettings):
         le=30,
         validation_alias=AliasChoices("HEALTHCHECK_TIMEOUT_SECONDS"),
     )
+    max_upload_size_bytes: int = Field(
+        default=20 * 1024 * 1024,
+        ge=1,
+        le=20 * 1024 * 1024,
+        validation_alias=AliasChoices("MAX_UPLOAD_SIZE_BYTES"),
+    )
+    max_pdf_pages: int = Field(
+        default=500,
+        ge=1,
+        le=10000,
+        validation_alias=AliasChoices("MAX_PDF_PAGES"),
+    )
+    upload_chunk_size_bytes: int = Field(
+        default=1024 * 1024,
+        ge=4096,
+        le=4 * 1024 * 1024,
+        validation_alias=AliasChoices("UPLOAD_CHUNK_SIZE_BYTES"),
+    )
 
 
 @lru_cache(maxsize=1)

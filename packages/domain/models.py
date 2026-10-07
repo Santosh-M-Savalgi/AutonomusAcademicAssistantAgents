@@ -1,12 +1,21 @@
 """Pydantic contracts locked for AAA v3 Phase 0."""
 
+import json
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from packages.domain.enums import LearningEventType, PlannerAction, ReasonCode
+from packages.domain.enums import (
+    JobLane,
+    JobStatus,
+    JobType,
+    LearningEventType,
+    PlannerAction,
+    PlannerRule,
+    ReasonCode,
+)
 
 
 class DomainModel(BaseModel):
@@ -52,18 +61,54 @@ class RubricItem(DomainModel):
     required: bool = True
 
 
+class PlannerDecisionProvenance(DomainModel):
+    """Detached audit context; contains identifiers and facts, never execution handles."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rule: PlannerRule
+    learner_id: UUID
+    course_id: UUID
+    session_id: UUID
+    state_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    graph_version_id: UUID | None = None
+    directive_id: UUID | None = None
+    remediation_frame_id: UUID | None = None
+    return_to_topic_id: UUID | None = None
+    diagnostic_run_id: UUID | None = None
+    diagnostic_policy_version: str | None = None
+    question_version_ids: tuple[UUID, ...] = ()
+    source_event_ids: tuple[UUID, ...] = ()
+    prerequisite_edge_ids: tuple[UUID, ...] = ()
+    projection_revision_id: UUID | None = None
+    evidence_set_digest: str | None = None
+    review_reasons: tuple[Literal["MASTERY_BELOW_THRESHOLD", "REVIEW_OVERDUE"], ...] = ()
+    state_issue: str | None = None
+
+
 class PlannerDecision(DomainModel):
     """Planner output constrained to the approved action vocabulary."""
 
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     action: PlannerAction
     target_id: str
-    reason_codes: list[ReasonCode]
-    evidence_ids: list[UUID]
+    reason_codes: tuple[ReasonCode, ...]
+    evidence_ids: tuple[UUID, ...]
     confidence: float = Field(ge=0, le=1)
     policy_outcome: Literal["ALLOW", "REQUIRE_CONFIRMATION", "BLOCK"]
     plan_version: int = Field(ge=1)
     planner_policy_version: str
     explanation: str | None = None
+    provenance: PlannerDecisionProvenance | None = None
+
+    def canonical_bytes(self) -> bytes:
+        """Stable JSON bytes; tuples retain the existing JSON array representation."""
+
+        return json.dumps(
+            self.model_dump(mode="json"), sort_keys=True, ensure_ascii=False,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
 
 
 class LessonBlock(DomainModel):
@@ -152,3 +197,26 @@ class LearningEvent(DomainModel):
 
 
 EventEnvelope = LearningEvent
+
+
+class JobContract(DomainModel):
+    """Serializable contract for a durable, idempotent worker job."""
+
+    id: UUID
+    type: JobType
+    payload: dict[str, Any]
+    status: JobStatus = JobStatus.PENDING
+    priority: int = 0
+    lane: JobLane = JobLane.BATCH
+    attempts: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, ge=1)
+    run_after: datetime
+    locked_by: str | None = None
+    lease_expires_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    idempotency_key: str = Field(min_length=1)
+    parent_job_id: UUID | None = None
+    result_ref: str | None = None
+    error_code: str | None = None
+    created_at: datetime
+    updated_at: datetime

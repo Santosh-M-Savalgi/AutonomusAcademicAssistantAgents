@@ -1,5 +1,6 @@
 """Shared, service-independent test fixtures for the AAA v3 foundation."""
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -18,6 +19,9 @@ from apps.api.auth.schemas import AuthenticatedIdentity
 from apps.api.config import Settings, get_settings
 from apps.api.main import create_app
 from apps.api.runtime import RuntimeResources
+from apps.worker.config import WorkerSettings
+from apps.worker.handlers import HandlerContext, HandlerResult
+from packages.domain.jobs import ClaimedJob
 from packages.persistence import Database, ObjectStorage, RedisClient
 
 _TEST_SIGNING_KEY = "fixture-test-only-key-with-at-least-32-characters"
@@ -177,3 +181,44 @@ def override_authentication(
     finally:
         test_app.dependency_overrides.clear()
         test_app.dependency_overrides.update(original)
+
+
+@pytest.fixture
+def worker_settings() -> WorkerSettings:
+    return WorkerSettings(
+        _env_file=None, enabled=True, concurrency=1, poll_seconds=0.05,
+        lease_seconds=10, heartbeat_seconds=0.5, reaper_seconds=0.1,
+        retry_base_seconds=0.01, retry_max_seconds=0.04,
+        io_timeout_seconds=0.2, shutdown_grace_seconds=0.05,
+        lanes=("interactive", "prefetch", "batch"),
+    )
+
+
+class ControlledHandler:
+    """Deterministic success/failure/slow handler; events control scheduling."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        self.cancelled = asyncio.Event()
+        self.failure: Exception | None = None
+        self.calls: list[ClaimedJob] = []
+
+    async def __call__(self, job: ClaimedJob, context: HandlerContext) -> HandlerResult:
+        self.calls.append(job)
+        assert context.worker_id == job.worker_id
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        if self.failure is not None:
+            raise self.failure
+        return HandlerResult(result_ref="synthetic-artifact")
+
+
+@pytest.fixture
+def controlled_handler() -> ControlledHandler:
+    return ControlledHandler()

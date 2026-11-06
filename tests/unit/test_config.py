@@ -29,6 +29,15 @@ def test_settings_have_safe_local_defaults() -> None:
 
     assert settings.app_env == "development"
     assert settings.aaa_profile == "mock"
+    assert settings.model_id == "meta-llama/Llama-3.2-3B-Instruct"
+    assert settings.model_artifact_path.endswith("llama-3.2-3b-instruct-q4_k_m.gguf")
+    assert settings.model_provider == "auto"
+    assert settings.model_gateway_interactive_capacity == 4
+    assert settings.model_gateway_prefetch_capacity == 2
+    assert settings.model_gateway_batch_capacity == 1
+    assert settings.model_gateway_timeout_seconds == 30.0
+    assert settings.model_gateway_cache_enabled is False
+    assert settings.llama_cpp_version == "v0.6.0"
     assert settings.database_url.startswith("postgresql+asyncpg://")
     assert settings.minio_secure is False
     assert settings.app_secret_key.get_secret_value() == "local-development-only"

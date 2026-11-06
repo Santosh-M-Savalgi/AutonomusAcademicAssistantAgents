@@ -1,4 +1,4 @@
-.PHONY: up down migrate test unit integration check
+.PHONY: up down migrate test unit integration check llama-help llama-up
 
 AAA_PROFILE ?= mock
 
@@ -25,3 +25,10 @@ check:
 	uv run --locked --group dev mypy --strict packages
 	uv run --locked --group dev lint-imports
 	uv run --locked --group dev pytest
+
+llama-help:
+	uv run --locked python -m packages.model_client.llama_server help --profile $(if $(filter gpu,$(AAA_PROFILE)),gpu,cpu)
+
+llama-up:
+	@test "$(AAA_PROFILE)" = cpu || test "$(AAA_PROFILE)" = gpu || (echo "AAA_PROFILE must be cpu or gpu for llama-up" >&2; exit 2)
+	uv run --locked python -m packages.model_client.llama_server serve --profile $(AAA_PROFILE)

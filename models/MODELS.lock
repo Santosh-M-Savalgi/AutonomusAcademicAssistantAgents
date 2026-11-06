@@ -1,2 +1,14 @@
-# Phase 0: no model artifacts are checked in.
-# Phase 4 records model filenames, versions, and sha256 digests here.
+# This lock records the human-verified local artifact and its provenance.
+# `make llama-up` verifies the file against this digest before starting.
+
+[artifact]
+model_id = "meta-llama/Llama-3.2-3B-Instruct"
+filename = "llama-3.2-3b-instruct-q4_k_m.gguf"
+format = "GGUF"
+quantization = "Q4_K_M"
+sha256 = "c55a83bfb6396799337853ca69918a0b9bbb2917621078c34570bc17d20fd7a1"
+source = "https://huggingface.co/hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF"
+license = "Llama 3.2 Community License"
+llama_cpp_version = "v0.6.0"
+llama_cpp_commit = "8345f333951c661d166b00e6f9362e553768f292"
+artifact_present = true

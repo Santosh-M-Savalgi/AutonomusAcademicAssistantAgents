@@ -42,6 +42,22 @@ forbidden_modules =
     packages.agents
     packages.model_client
 
+[importlinter:contract:model-client-boundary]
+name = Model client does not depend on the gateway implementation
+type = forbidden
+source_modules =
+    packages.model_client
+forbidden_modules =
+    apps.model_gateway
+
+[importlinter:contract:agent-model-boundary]
+name = Agents use the model client abstraction, not gateway providers
+type = forbidden
+source_modules =
+    packages.agents
+forbidden_modules =
+    apps.model_gateway
+
 [importlinter:contract:planner-purity]
 name = Planner has no infrastructure, environment, clock, graph or mastery dependencies
 type = forbidden

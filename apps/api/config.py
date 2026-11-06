@@ -25,6 +25,91 @@ class Settings(BaseSettings):
     aaa_profile: Literal["mock", "cpu", "gpu"] = Field(
         default="mock", validation_alias=AliasChoices("AAA_PROFILE")
     )
+    model_provider: Literal["auto", "fake", "llama_cpp"] = Field(
+        default="auto", validation_alias=AliasChoices("MODEL_PROVIDER")
+    )
+    model_base_url: str = Field(
+        default="http://127.0.0.1:8080", validation_alias=AliasChoices("MODEL_BASE_URL")
+    )
+    model_id: Literal["meta-llama/Llama-3.2-3B-Instruct"] = Field(
+        default="meta-llama/Llama-3.2-3B-Instruct", validation_alias=AliasChoices("MODEL_ID")
+    )
+    model_artifact_path: str = Field(
+        default="models/llama-3.2-3b-instruct-q4_k_m.gguf",
+        validation_alias=AliasChoices("MODEL_ARTIFACT_PATH"),
+    )
+    model_lock_path: str = Field(
+        default="models/MODELS.lock", validation_alias=AliasChoices("MODEL_LOCK_PATH")
+    )
+    llama_cpp_version: Literal["v0.6.0"] = Field(
+        default="v0.6.0", validation_alias=AliasChoices("LLAMA_CPP_VERSION")
+    )
+    model_gateway_retry_max_attempts: int = Field(
+        default=2, ge=1, le=3, validation_alias=AliasChoices("MODEL_GATEWAY_RETRY_MAX_ATTEMPTS")
+    )
+    model_gateway_retry_base_delay_seconds: float = Field(
+        default=0.05,
+        ge=0,
+        le=60,
+        validation_alias=AliasChoices("MODEL_GATEWAY_RETRY_BASE_DELAY_SECONDS"),
+    )
+    model_gateway_retry_max_delay_seconds: float = Field(
+        default=1.0,
+        ge=0,
+        le=120,
+        validation_alias=AliasChoices("MODEL_GATEWAY_RETRY_MAX_DELAY_SECONDS"),
+    )
+    model_gateway_retry_jitter_seconds: float = Field(
+        default=0.05,
+        ge=0,
+        le=60,
+        validation_alias=AliasChoices("MODEL_GATEWAY_RETRY_JITTER_SECONDS"),
+    )
+    model_gateway_interactive_capacity: int = Field(
+        default=4, ge=1, le=100, validation_alias=AliasChoices("MODEL_GATEWAY_INTERACTIVE_CAPACITY")
+    )
+    model_gateway_prefetch_capacity: int = Field(
+        default=2, ge=1, le=100, validation_alias=AliasChoices("MODEL_GATEWAY_PREFETCH_CAPACITY")
+    )
+    model_gateway_batch_capacity: int = Field(
+        default=1, ge=1, le=100, validation_alias=AliasChoices("MODEL_GATEWAY_BATCH_CAPACITY")
+    )
+    model_gateway_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=600,
+        validation_alias=AliasChoices("MODEL_GATEWAY_TIMEOUT_SECONDS"),
+    )
+    model_gateway_circuit_failure_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("MODEL_GATEWAY_CIRCUIT_FAILURE_THRESHOLD"),
+    )
+    model_gateway_circuit_open_duration_seconds: float = Field(
+        default=30.0,
+        ge=0,
+        le=3600,
+        validation_alias=AliasChoices("MODEL_GATEWAY_CIRCUIT_OPEN_DURATION_SECONDS"),
+    )
+    model_gateway_circuit_half_open_probe_capacity: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("MODEL_GATEWAY_CIRCUIT_HALF_OPEN_PROBE_CAPACITY"),
+    )
+    model_gateway_cache_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("MODEL_GATEWAY_CACHE_ENABLED")
+    )
+    model_gateway_cache_ttl_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        le=86400,
+        validation_alias=AliasChoices("MODEL_GATEWAY_CACHE_TTL_SECONDS"),
+    )
+    model_gateway_telemetry_enabled: bool = Field(
+        default=True, validation_alias=AliasChoices("MODEL_GATEWAY_TELEMETRY_ENABLED")
+    )
     app_secret_key: SecretStr = Field(
         default=SecretStr("local-development-only"),
         validation_alias=AliasChoices("APP_SECRET_KEY", "SECRET_KEY"),
